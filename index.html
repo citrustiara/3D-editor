@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Game Content 3D Editor</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.165.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.165.0/examples/jsm/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <div id="app" class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <div>
+            <h1>3D Content Editor</h1>
+            <p>FPS maps, GLB placement, collision, and weapon offsets</p>
+          </div>
+        </div>
+        <div class="top-actions">
+          <label class="file-button" title="Load an FPS map JSON file">
+            <input id="map-file" type="file" accept=".json,application/json" />
+            <span>Load JSON</span>
+          </label>
+          <button id="sample-map" type="button" title="Reset to the included sample arena">Sample</button>
+          <button id="quick-test" type="button" title="Spawn into the current map">Test Spawn</button>
+          <button id="validate-map" type="button" title="Run schema and gameplay validation">Validate</button>
+          <button id="export-map" type="button" class="primary" title="Download the current FPS map JSON">Export</button>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <aside class="rail" aria-label="Editor tools">
+          <div class="tool-group" role="group" aria-label="Place">
+            <button class="tool-button" data-add="box" title="Add collidable box">Box</button>
+            <button class="tool-button" data-add="platform" title="Add standing platform">Platform</button>
+            <button class="tool-button" data-add="ramp" title="Add ramp">Ramp</button>
+            <button class="tool-button" data-add="collision" title="Add invisible collision">Collision</button>
+            <button class="tool-button" data-add="decor" title="Add decor box">Decor</button>
+            <button class="tool-button" data-add="spawn" title="Add spawn point">Spawn</button>
+            <button class="tool-button" data-add="floor" title="Add floor rectangle">Floor</button>
+            <button class="tool-button" data-add="asset" title="Add GLB or GLTF asset">GLB</button>
+          </div>
+
+          <div class="tool-group" role="group" aria-label="Transform">
+            <button class="tool-button active" data-mode="translate" title="Move selected object">Move</button>
+            <button class="tool-button" data-mode="rotate" title="Rotate selected object">Rotate</button>
+            <button class="tool-button" data-mode="scale" title="Scale selected object">Scale</button>
+          </div>
+
+          <div class="tool-group" role="group" aria-label="Selection actions">
+            <button class="tool-button" id="undo-action" type="button" title="Undo last editor action">Undo</button>
+            <button class="tool-button" id="redo-action" type="button" title="Redo last editor action">Redo</button>
+            <button class="tool-button" id="duplicate-object" type="button" title="Duplicate selection">Duplicate</button>
+            <button class="tool-button danger" id="delete-object" type="button" title="Delete selection">Delete</button>
+          </div>
+        </aside>
+
+        <section class="stage" aria-label="3D editor viewport">
+          <div id="viewport" class="viewport" tabindex="0"></div>
+          <div class="viewport-hud">
+            <label title="Snap move and scale to the grid">
+              <input id="snap-enabled" type="checkbox" checked />
+              Snap
+            </label>
+            <label title="Grid spacing for snapping">
+              Grid
+              <input id="grid-size" type="number" min="0.25" step="0.25" value="1" />
+            </label>
+            <label title="Rotation snap angle">
+              Rot
+              <input id="rotate-snap" type="number" min="1" step="1" value="15" />
+            </label>
+            <span id="selection-label">Nothing selected</span>
+          </div>
+          <div id="test-overlay" class="test-overlay hidden">
+            <span id="test-status">Spawn test active</span>
+            <button id="exit-test" type="button">Exit Test</button>
+          </div>
+        </section>
+
+        <aside class="panel" aria-label="Properties and export">
+          <div class="tabs" role="tablist">
+            <button class="tab active" data-tab="map" type="button">Map</button>
+            <button class="tab" data-tab="inspect" type="button">Inspect</button>
+            <button class="tab" data-tab="visibility" type="button">Visibility</button>
+            <button class="tab" data-tab="weapon" type="button">Weapon</button>
+            <button class="tab" data-tab="export" type="button">Export</button>
+          </div>
+
+          <section class="tab-panel active" data-panel="map">
+            <div class="panel-section">
+              <h2>Map Settings</h2>
+              <div id="map-fields" class="form-grid"></div>
+            </div>
+            <div class="panel-section">
+              <h2>Validation</h2>
+              <div id="validation-output" class="validation-output"></div>
+            </div>
+          </section>
+
+          <section class="tab-panel" data-panel="inspect">
+            <div class="panel-section">
+              <h2>Selection</h2>
+              <div id="inspector-empty" class="empty-state">Select an object in the viewport or add one from the toolbar.</div>
+              <div id="inspector" class="form-grid"></div>
+            </div>
+          </section>
+
+          <section class="tab-panel" data-panel="visibility">
+            <div class="panel-section">
+              <h2>Scene Layers</h2>
+              <div id="visibility-fields" class="toggle-list"></div>
+            </div>
+          </section>
+
+          <section class="tab-panel" data-panel="weapon">
+            <div class="panel-section">
+              <h2>Weapon Model Config</h2>
+              <div id="weapon-fields" class="form-grid"></div>
+              <button id="weapon-preview" type="button">Preview Model</button>
+            </div>
+            <div class="panel-section">
+              <h2>Weapon JSON</h2>
+              <textarea id="weapon-output" spellcheck="false"></textarea>
+            </div>
+          </section>
+
+          <section class="tab-panel" data-panel="export">
+            <div class="panel-section">
+              <h2>FPS Map JSON</h2>
+              <textarea id="export-output" spellcheck="false"></textarea>
+            </div>
+            <div class="panel-section">
+              <h2>Manifest Entry</h2>
+              <input id="manifest-entry" type="text" readonly />
+              <button id="copy-manifest" type="button">Copy Entry</button>
+            </div>
+          </section>
+        </aside>
+      </main>
+    </div>
+
+    <script type="module" src="./src/editor.js"></script>
+  </body>
+</html>
