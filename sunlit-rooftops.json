@@ -1,0 +1,631 @@
+{
+  "version": 1,
+  "id": "sunlit-rooftops",
+  "name": "Sunlit Rooftops",
+  "sky": 12447743,
+  "fog": 12447743,
+  "fogNear": 50,
+  "fogFar": 160,
+  "shape": "l",
+  "bounds": {
+    "x": 72,
+    "z": 72
+  },
+  "spawnPoints": [
+    {
+      "x": -50,
+      "z": 10
+    },
+    {
+      "x": 45,
+      "z": -10
+    }
+  ],
+  "floors": [],
+  "floor": 14149327,
+  "gridA": 16777215,
+  "gridB": 8172942,
+  "edge": 16249033,
+  "boxes": [
+    {
+      "name": "west-building-body",
+      "x": -50,
+      "y": -150,
+      "z": 10,
+      "sx": 20,
+      "sy": 170,
+      "sz": 20,
+      "color": 9330254,
+      "isPlatform": true
+    },
+    {
+      "name": "north-building-body",
+      "x": -15,
+      "y": -150,
+      "z": -35,
+      "sx": 24,
+      "sy": 164,
+      "sz": 18,
+      "color": 5139342,
+      "isPlatform": true
+    },
+    {
+      "name": "center-building-body",
+      "x": 0,
+      "y": -150,
+      "z": 0,
+      "sx": 16,
+      "sy": 178,
+      "sz": 16,
+      "color": 10526880,
+      "isPlatform": true
+    },
+    {
+      "name": "southwest-building-body",
+      "x": -25,
+      "y": -150,
+      "z": 35,
+      "sx": 18,
+      "sy": 160,
+      "sz": 22,
+      "color": 8421504,
+      "isPlatform": true
+    },
+    {
+      "name": "east-building-body",
+      "x": 45,
+      "y": -150,
+      "z": -10,
+      "sx": 22,
+      "sy": 166,
+      "sz": 26,
+      "color": 9330254,
+      "isPlatform": true
+    },
+    {
+      "name": "southeast-building-body",
+      "x": 25,
+      "y": -150,
+      "z": 40,
+      "sx": 20,
+      "sy": 172,
+      "sz": 18,
+      "color": 5139342,
+      "isPlatform": true
+    },
+    {
+      "name": "west-parapet-w",
+      "x": -60,
+      "y": 20,
+      "z": 10,
+      "sx": 0.4,
+      "sy": 1,
+      "sz": 20.4,
+      "color": 9330254,
+      "isPlatform": true
+    },
+    {
+      "name": "west-parapet-n",
+      "x": -50,
+      "y": 20,
+      "z": 20,
+      "sx": 20.4,
+      "sy": 1,
+      "sz": 0.4,
+      "color": 9330254,
+      "isPlatform": true
+    },
+    {
+      "name": "west-parapet-s",
+      "x": -50,
+      "y": 20,
+      "z": 0,
+      "sx": 20.4,
+      "sy": 1,
+      "sz": 0.4,
+      "color": 9330254,
+      "isPlatform": true
+    },
+    {
+      "name": "west-parapet-e-n",
+      "x": -40,
+      "y": 20,
+      "z": 16,
+      "sx": 0.4,
+      "sy": 1,
+      "sz": 8,
+      "color": 9330254,
+      "isPlatform": true
+    },
+    {
+      "name": "west-parapet-e-s",
+      "x": -40,
+      "y": 20,
+      "z": 4,
+      "sx": 0.4,
+      "sy": 1,
+      "sz": 8,
+      "color": 9330254,
+      "isPlatform": true
+    },
+    {
+      "name": "center-parapet-n",
+      "x": 0,
+      "y": 28,
+      "z": 8,
+      "sx": 16.4,
+      "sy": 1.2,
+      "sz": 0.4,
+      "color": 10526880,
+      "isPlatform": true
+    },
+    {
+      "name": "center-parapet-s",
+      "x": 0,
+      "y": 28,
+      "z": -8,
+      "sx": 16.4,
+      "sy": 1.2,
+      "sz": 0.4,
+      "color": 10526880,
+      "isPlatform": true
+    },
+    {
+      "name": "center-parapet-w-n",
+      "x": -8,
+      "y": 28,
+      "z": 4,
+      "sx": 0.4,
+      "sy": 1.2,
+      "sz": 8,
+      "color": 10526880,
+      "isPlatform": true
+    },
+    {
+      "name": "center-parapet-w-s",
+      "x": -8,
+      "y": 28,
+      "z": -6,
+      "sx": 0.4,
+      "sy": 1.2,
+      "sz": 4,
+      "color": 10526880,
+      "isPlatform": true
+    },
+    {
+      "name": "center-parapet-e-n",
+      "x": 8,
+      "y": 28,
+      "z": 4,
+      "sx": 0.4,
+      "sy": 1.2,
+      "sz": 8,
+      "color": 10526880,
+      "isPlatform": true
+    },
+    {
+      "name": "center-parapet-e-s",
+      "x": 8,
+      "y": 28,
+      "z": -6,
+      "sx": 0.4,
+      "sy": 1.2,
+      "sz": 4,
+      "color": 10526880,
+      "isPlatform": true
+    },
+    {
+      "name": "crane-mast",
+      "x": 4,
+      "y": 28,
+      "z": 4,
+      "sx": 1.2,
+      "sy": 18,
+      "sz": 1.2,
+      "color": 16753920,
+      "isPlatform": true
+    },
+    {
+      "name": "crane-cab",
+      "x": 4,
+      "y": 45,
+      "z": 5.4,
+      "sx": 1.6,
+      "sy": 1.6,
+      "sz": 1.6,
+      "color": 3355443,
+      "isPlatform": true
+    },
+    {
+      "name": "crane-jib-main",
+      "x": 10,
+      "y": 46,
+      "z": 4,
+      "sx": 14,
+      "sy": 0.8,
+      "sz": 0.8,
+      "color": 16753920,
+      "isPlatform": true
+    },
+    {
+      "name": "crane-jib-counter",
+      "x": -1,
+      "y": 46,
+      "z": 4,
+      "sx": 8,
+      "sy": 1,
+      "sz": 1,
+      "color": 6710886,
+      "isPlatform": true
+    },
+    {
+      "name": "crane-counterweight",
+      "x": -4,
+      "y": 45,
+      "z": 4,
+      "sx": 2,
+      "sy": 1.5,
+      "sz": 1.5,
+      "color": 3355443,
+      "isPlatform": true
+    },
+    {
+      "name": "scaffold-support-1",
+      "x": -11,
+      "y": 0,
+      "z": -20,
+      "sx": 0.3,
+      "sy": 24,
+      "sz": 0.3,
+      "color": 6710886,
+      "isPlatform": true
+    },
+    {
+      "name": "scaffold-support-2",
+      "x": -5,
+      "y": 0,
+      "z": -20,
+      "sx": 0.3,
+      "sy": 24,
+      "sz": 0.3,
+      "color": 6710886,
+      "isPlatform": true
+    },
+    {
+      "name": "scaffold-support-3",
+      "x": -11,
+      "y": 0,
+      "z": -14,
+      "sx": 0.3,
+      "sy": 24,
+      "sz": 0.3,
+      "color": 6710886,
+      "isPlatform": true
+    },
+    {
+      "name": "scaffold-support-4",
+      "x": -5,
+      "y": 0,
+      "z": -14,
+      "sx": 0.3,
+      "sy": 24,
+      "sz": 0.3,
+      "color": 6710886,
+      "isPlatform": true
+    },
+    {
+      "name": "scaffold-support-5",
+      "x": -11,
+      "y": 0,
+      "z": -8,
+      "sx": 0.3,
+      "sy": 24,
+      "sz": 0.3,
+      "color": 6710886,
+      "isPlatform": true
+    },
+    {
+      "name": "scaffold-support-6",
+      "x": -5,
+      "y": 0,
+      "z": -8,
+      "sx": 0.3,
+      "sy": 24,
+      "sz": 0.3,
+      "color": 6710886,
+      "isPlatform": true
+    },
+    {
+      "name": "west-ac-1",
+      "x": -48,
+      "y": 20,
+      "z": 16,
+      "sx": 2,
+      "sy": 1.6,
+      "sz": 2,
+      "color": 11184810,
+      "isPlatform": true
+    },
+    {
+      "name": "west-ac-2",
+      "x": -52,
+      "y": 20,
+      "z": 16,
+      "sx": 1.8,
+      "sy": 1.4,
+      "sz": 1.8,
+      "color": 11184810,
+      "isPlatform": true
+    },
+    {
+      "name": "southwest-room",
+      "x": -25,
+      "y": 10,
+      "z": 30,
+      "sx": 4,
+      "sy": 3,
+      "sz": 4,
+      "color": 8421504,
+      "isPlatform": true
+    },
+    {
+      "name": "southwest-pipe",
+      "x": -28,
+      "y": 10,
+      "z": 40,
+      "sx": 1,
+      "sy": 2.5,
+      "sz": 1,
+      "color": 11184810,
+      "isPlatform": true
+    },
+    {
+      "name": "north-room",
+      "x": -20,
+      "y": 14,
+      "z": -35,
+      "sx": 5,
+      "sy": 3,
+      "sz": 5,
+      "color": 5139342,
+      "isPlatform": true
+    },
+    {
+      "name": "east-ac-plant",
+      "x": 48,
+      "y": 16,
+      "z": -20,
+      "sx": 3,
+      "sy": 2,
+      "sz": 4,
+      "color": 11184810,
+      "isPlatform": true
+    },
+    {
+      "name": "east-pipe",
+      "x": 38,
+      "y": 16,
+      "z": -4,
+      "sx": 1.2,
+      "sy": 3,
+      "sz": 1.2,
+      "color": 11184810,
+      "isPlatform": true
+    },
+    {
+      "name": "southeast-room",
+      "x": 20,
+      "y": 22,
+      "z": 44,
+      "sx": 4,
+      "sy": 3,
+      "sz": 4,
+      "color": 5139342,
+      "isPlatform": true
+    }
+  ],
+  "platforms": [
+    {
+      "name": "west-roof",
+      "x": -50,
+      "y": 19.8,
+      "z": 10,
+      "sx": 20,
+      "sy": 0.4,
+      "sz": 20,
+      "color": 3815994
+    },
+    {
+      "name": "north-roof",
+      "x": -15,
+      "y": 13.8,
+      "z": -35,
+      "sx": 24,
+      "sy": 0.4,
+      "sz": 18,
+      "color": 5197647
+    },
+    {
+      "name": "center-roof",
+      "x": 0,
+      "y": 27.8,
+      "z": 0,
+      "sx": 16,
+      "sy": 0.4,
+      "sz": 16,
+      "color": 3815994
+    },
+    {
+      "name": "southwest-roof",
+      "x": -25,
+      "y": 9.8,
+      "z": 35,
+      "sx": 18,
+      "sy": 0.4,
+      "sz": 22,
+      "color": 5197647
+    },
+    {
+      "name": "east-roof",
+      "x": 45,
+      "y": 15.8,
+      "z": -10,
+      "sx": 22,
+      "sy": 0.4,
+      "sz": 26,
+      "color": 3815994
+    },
+    {
+      "name": "southeast-roof",
+      "x": 25,
+      "y": 21.8,
+      "z": 40,
+      "sx": 20,
+      "sy": 0.4,
+      "sz": 18,
+      "color": 5197647
+    },
+    {
+      "name": "bridge-west-sw",
+      "x": -37.5,
+      "y": 14.8,
+      "z": 22.5,
+      "sx": 4,
+      "sy": 0.4,
+      "sz": 10,
+      "color": 12756605
+    },
+    {
+      "name": "bridge-sw-se",
+      "x": -0.5,
+      "y": 11.8,
+      "z": 35,
+      "sx": 31,
+      "sy": 0.4,
+      "sz": 4,
+      "color": 8421504
+    },
+    {
+      "name": "scaffold-platform-1",
+      "x": -8,
+      "y": 17.8,
+      "z": -18,
+      "sx": 6,
+      "sy": 0.4,
+      "sz": 6,
+      "color": 12756605
+    },
+    {
+      "name": "scaffold-platform-2",
+      "x": -8,
+      "y": 22.8,
+      "z": -10,
+      "sx": 6,
+      "sy": 0.4,
+      "sz": 6,
+      "color": 12756605
+    },
+    {
+      "name": "bridge-center-east",
+      "x": 22.5,
+      "y": 21.8,
+      "z": -5,
+      "sx": 18,
+      "sy": 0.4,
+      "sz": 3,
+      "color": 8421504
+    },
+    {
+      "name": "east-helipad",
+      "x": 45,
+      "y": 16.2,
+      "z": -10,
+      "sx": 12,
+      "sy": 0.5,
+      "sz": 12,
+      "color": 7829367
+    }
+  ],
+  "collision": [],
+  "decor": [],
+  "assets": [],
+  "ramps": [
+    {
+      "name": "west-north-ramp",
+      "x": -32,
+      "y": 14,
+      "z": -10,
+      "width": 4,
+      "length": 12,
+      "height": 6,
+      "rot": 3.1416,
+      "color": 12756605
+    },
+    {
+      "name": "north-scaffold-1-ramp",
+      "x": -11,
+      "y": 14,
+      "z": -23,
+      "width": 3,
+      "length": 8,
+      "height": 4,
+      "rot": -1.5708,
+      "color": 12756605
+    },
+    {
+      "name": "scaffold-1-2-ramp",
+      "x": -8,
+      "y": 18,
+      "z": -14,
+      "width": 3,
+      "length": 8,
+      "height": 5,
+      "rot": 0,
+      "color": 12756605
+    },
+    {
+      "name": "scaffold-2-center-ramp",
+      "x": -4,
+      "y": 23,
+      "z": -7,
+      "width": 3,
+      "length": 8,
+      "height": 5,
+      "rot": 1.5708,
+      "color": 12756605
+    },
+    {
+      "name": "center-bridge-east-ramp",
+      "x": 11,
+      "y": 22,
+      "z": -3,
+      "width": 3,
+      "length": 8,
+      "height": 6,
+      "rot": 1.5708,
+      "color": 8421504
+    },
+    {
+      "name": "bridge-east-east-ramp",
+      "x": 31,
+      "y": 16,
+      "z": -7,
+      "width": 3,
+      "length": 10,
+      "height": 6,
+      "rot": 1.5708,
+      "color": 8421504
+    },
+    {
+      "name": "se-east-ramp",
+      "x": 30,
+      "y": 16,
+      "z": 15,
+      "width": 4,
+      "length": 12,
+      "height": 6,
+      "rot": 0,
+      "color": 12756605
+    }
+  ]
+}

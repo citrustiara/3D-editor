@@ -303,9 +303,10 @@ export class FpsTestRuntime {
   }
 
   lowestArenaY() {
-    let lowest = 0;
+    let lowest = (this.map?.floors && this.map.floors.length > 0) ? Infinity : -60;
     for (const floor of this.map?.floors || []) lowest = Math.min(lowest, Number(floor.y || 0));
     for (const ramp of this.map?.ramps || []) lowest = Math.min(lowest, Number(ramp.y ?? 1));
+    if (lowest === Infinity) lowest = 0;
     return lowest;
   }
 

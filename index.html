@@ -25,7 +25,11 @@
           </div>
         </div>
         <div class="top-actions">
-          <label class="file-button" title="Load an FPS map JSON file">
+          <select id="editor-mode-select" style="width: 140px; min-height: 34px;">
+            <option value="map">Map Editor</option>
+            <option value="weapon">Weapon Editor</option>
+          </select>
+          <label class="file-button" id="map-load-button" title="Load an FPS map JSON file">
             <input id="map-file" type="file" accept=".json,application/json" />
             <span>Load JSON</span>
           </label>
@@ -38,7 +42,7 @@
 
       <main class="workspace">
         <aside class="rail" aria-label="Editor tools">
-          <div class="tool-group" role="group" aria-label="Place">
+          <div class="tool-group" id="map-place-tools" role="group" aria-label="Place Map Object">
             <button class="tool-button" data-add="box" title="Add collidable box">Box</button>
             <button class="tool-button" data-add="platform" title="Add standing platform">Platform</button>
             <button class="tool-button" data-add="ramp" title="Add ramp">Ramp</button>
@@ -47,6 +51,13 @@
             <button class="tool-button" data-add="spawn" title="Add spawn point">Spawn</button>
             <button class="tool-button" data-add="floor" title="Add floor rectangle">Floor</button>
             <button class="tool-button" data-add="asset" title="Add GLB or GLTF asset">GLB</button>
+          </div>
+
+          <div class="tool-group" id="weapon-place-tools" role="group" aria-label="Place Weapon Part" style="display: none;">
+            <button class="tool-button" data-add-part="box" title="Add box part">Box Part</button>
+            <button class="tool-button" data-add-part="cylinder" title="Add cylinder part">Cylinder Part</button>
+            <button class="tool-button" data-add-part="sphere" title="Add sphere part">Sphere Part</button>
+            <button class="tool-button" id="select-muzzle-tool" title="Select Muzzle Point">Muzzle Point</button>
           </div>
 
           <div class="tool-group" role="group" aria-label="Transform">
@@ -123,12 +134,25 @@
 
           <section class="tab-panel" data-panel="weapon">
             <div class="panel-section">
-              <h2>Weapon Model Config</h2>
-              <div id="weapon-fields" class="form-grid"></div>
-              <button id="weapon-preview" type="button">Preview Model</button>
+              <h2>Load / Save Weapons</h2>
+              <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+                <label class="file-button" title="Load weapons JSON file" style="flex: 1;">
+                  <input id="weapons-file" type="file" accept=".json,application/json" />
+                  <span>Load weapons.json</span>
+                </label>
+                <button id="export-weapons" type="button" class="primary" title="Download weapons JSON" style="flex: 1;">Export Weapons</button>
+              </div>
             </div>
             <div class="panel-section">
-              <h2>Weapon JSON</h2>
+              <h2>Active Weapon</h2>
+              <select id="active-weapon-select" style="margin-bottom: 12px;"></select>
+            </div>
+            <div class="panel-section">
+              <h2>Weapon Config / Offsets</h2>
+              <div id="weapon-fields" class="form-grid"></div>
+            </div>
+            <div class="panel-section">
+              <h2>Weapons File JSON</h2>
               <textarea id="weapon-output" spellcheck="false"></textarea>
             </div>
           </section>

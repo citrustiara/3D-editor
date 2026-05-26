@@ -44,6 +44,8 @@ const labels = {
   assets: "Asset",
   floors: "Floor",
   spawnPoints: "Spawn",
+  parts: "Part",
+  muzzle: "Muzzle Point",
 };
 
 let map = createSampleMap();
@@ -53,6 +55,10 @@ let weaponConfig = createWeaponConfig();
 let editorCameraState = null;
 let pendingInputSnapshot = null;
 let transformStartSnapshot = null;
+let editingMode = "map";
+let weaponsData = null;
+let activeWeaponId = "pistol";
+let loadedSingleWeapon = false;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(map.sky);
@@ -90,9 +96,17 @@ const pointer = new THREE.Vector2();
 const mapGroup = new THREE.Group();
 scene.add(mapGroup);
 
+const weaponGroup = new THREE.Group();
+scene.add(weaponGroup);
+
 const grid = new THREE.GridHelper(220, 220, colors.gridA, colors.gridB);
 grid.position.y = 0.01;
 scene.add(grid);
+
+const weaponGrid = new THREE.GridHelper(4, 40, 0xffaa00, 0x554433);
+weaponGrid.position.y = 0.005;
+weaponGrid.visible = false;
+scene.add(weaponGrid);
 
 const boundsHelper = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: colors.edge }));
 scene.add(boundsHelper);
@@ -223,6 +237,25 @@ const objectFields = {
     ["scale", "Scale", "number"],
     ["collidable", "Collidable", "checkbox"],
   ],
+  parts: [
+    ["name", "Name", "text", true],
+    ["type", "Type", "text", true],
+    ["x", "X Offset", "number"],
+    ["y", "Y Offset", "number"],
+    ["z", "Z Offset", "number"],
+    ["sx", "Size X / Radius", "number"],
+    ["sy", "Size Y / Height", "number"],
+    ["sz", "Size Z", "number"],
+    ["rotX", "Rot X", "number"],
+    ["rotY", "Rot Y", "number"],
+    ["rotZ", "Rot Z", "number"],
+    ["color", "Color", "color"],
+  ],
+  muzzle: [
+    ["x", "Muzzle X", "number"],
+    ["y", "Muzzle Y", "number"],
+    ["z", "Muzzle Z", "number"],
+  ],
 };
 
 function createSampleMap() {
@@ -257,6 +290,164 @@ function createSampleMap() {
     ],
     assets: [],
   };
+}
+
+function getActiveWeapon() {
+  if (!weaponsData || !weaponsData.weapons) return null;
+  return weaponsData.weapons[activeWeaponId] || null;
+}
+
+function rebuildWeaponScene() {
+  selected = keepWeaponSelectionReference(selected);
+  transform.detach();
+  selectable.length = 0;
+  weaponGroup.clear();
+
+  if (editingMode !== "weapon") return;
+
+  const weapon = getActiveWeapon();
+  if (!weapon) return;
+
+  if (Array.isArray(weapon.parts)) {
+    weapon.parts.forEach((part, index) => {
+      let geom;
+      const sx = positive(part.sx || 0.1, 0.1);
+      const sy = positive(part.sy || 0.1, 0.1);
+      const sz = positive(part.sz || 0.1, 0.1);
+      if (part.type === "cylinder") {
+        geom = new THREE.CylinderGeometry(sx, sz, sy, 16);
+      } else if (part.type === "sphere") {
+        geom = new THREE.SphereGeometry(sx, 16, 16);
+      } else {
+        geom = new THREE.BoxGeometry(sx, sy, sz);
+      }
+      
+      const mat = new THREE.MeshStandardMaterial({
+        color: part.color ?? 0x555555,
+        roughness: 0.5,
+        metalness: 0.3,
+      });
+      const mesh = new THREE.Mesh(geom, mat);
+      mesh.position.set(part.x || 0, part.y || 0, part.z || 0);
+      mesh.rotation.set(part.rotX || 0, part.rotY || 0, part.rotZ || 0);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      
+      mesh.userData.baseScale = { sx, sy, sz };
+      addSelectable(mesh, "parts", index);
+    });
+  }
+
+  const muzzle = weapon.muzzle || { x: 0, y: 0.08, z: -1.0 };
+  const muzzleGeom = new THREE.SphereGeometry(0.04, 16, 16);
+  const muzzleMat = new THREE.MeshBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 0.8 });
+  const muzzleMesh = new THREE.Mesh(muzzleGeom, muzzleMat);
+  muzzleMesh.position.set(muzzle.x, muzzle.y, muzzle.z);
+  addSelectable(muzzleMesh, "muzzle", 0);
+
+  if (selected) {
+    const mesh = selectable.find((item) => item.userData.kind === selected.kind && item.userData.index === selected.index);
+    if (mesh) selectMesh(mesh);
+    else clearSelection();
+  }
+}
+
+function keepWeaponSelectionReference(current) {
+  if (!current) return null;
+  const weapon = getActiveWeapon();
+  if (!weapon) return null;
+  if (current.kind === "parts" && weapon.parts?.[current.index]) return current;
+  if (current.kind === "muzzle") return current;
+  return null;
+}
+
+async function loadDefaultWeapons() {
+  try {
+    const response = await fetch("../GolfShooter/assets/weapons/weapons.json");
+    if (response.ok) {
+      const data = await response.json();
+      if (data) {
+        weaponsData = data;
+        const weapons = weaponsData.weapons || {};
+        await Promise.all(Object.keys(weapons).map(async (id) => {
+          try {
+            const res = await fetch(`../GolfShooter/assets/weapons/models/${id}.json`);
+            if (res.ok) {
+              const modelData = await res.json();
+              if (modelData) {
+                if (modelData.parts) weapons[id].parts = modelData.parts;
+                if (modelData.muzzle) weapons[id].muzzle = modelData.muzzle;
+              }
+            }
+          } catch (e) {
+            console.warn(`Could not load model for ${id}`, e);
+          }
+        }));
+        renderWeaponList();
+        if (editingMode === "weapon") rebuildWeaponScene();
+        return;
+      }
+    }
+  } catch (e) {
+    console.warn("Could not auto-load weapons.json, using fallback.", e);
+  }
+  
+  weaponsData = {
+    version: 1,
+    weapons: {
+      pistol: {
+        label: "Pistol",
+        parts: [
+          { name: "frame", type: "box", x: 0, y: -0.04, z: -0.05, sx: 0.12, sy: 0.18, sz: 0.34, rotX: 0, rotY: 0, rotZ: 0, color: 0x1b1f24 }
+        ],
+        muzzle: { x: 0, y: 0.08, z: -0.5 }
+      }
+    }
+  };
+  renderWeaponList();
+}
+
+function renderWeaponList() {
+  const select = $("#active-weapon-select");
+  if (!select || !weaponsData || !weaponsData.weapons) return;
+  select.innerHTML = Object.keys(weaponsData.weapons).map(id => `
+    <option value="${id}">${weaponsData.weapons[id].label || titleCase(id)}</option>
+  `).join("");
+  select.value = activeWeaponId;
+  updateWeaponOutput();
+}
+
+function addWeaponPart(type) {
+  const weapon = getActiveWeapon();
+  if (!weapon) return;
+  weapon.parts ||= [];
+  const part = {
+    name: uniquePartName(type),
+    type: type,
+    x: 0,
+    y: 0,
+    z: 0,
+    sx: type === "sphere" || type === "cylinder" ? 0.05 : 0.1,
+    sy: type === "cylinder" ? 0.2 : 0.1,
+    sz: 0.1,
+    rotX: 0,
+    rotY: 0,
+    rotZ: 0,
+    color: 0x1b1f24
+  };
+  weapon.parts.push(part);
+  renderAll();
+  selectAfterRebuild("parts", weapon.parts.length - 1);
+}
+
+function uniquePartName(base) {
+  const weapon = getActiveWeapon();
+  if (!weapon || !weapon.parts) return base;
+  let counter = 1;
+  while (weapon.parts.some(p => p.name === `${base}-${counter}`)) {
+    counter++;
+  }
+  return `${base}-${counter}`;
 }
 
 function createWeaponConfig() {
@@ -327,17 +518,33 @@ function updateHistoryButtons() {
 }
 
 function renderAll() {
-  scene.background = new THREE.Color(numberOr(map.sky, colors.floor));
-  scene.fog = new THREE.Fog(numberOr(map.fog, map.sky), numberOr(map.fogNear, 60), numberOr(map.fogFar, 180));
-  grid.material.color.set(numberOr(map.gridA, colors.gridA));
-  grid.material.vertexColors = false;
-  rebuildMap();
-  updateBoundsHelper();
-  renderMapFields();
-  renderInspector();
-  renderVisibility();
-  updateExport();
-  renderValidation(validateMap());
+  if (editingMode === "weapon") {
+    grid.visible = false;
+    boundsHelper.visible = false;
+    weaponGrid.visible = true;
+    mapGroup.visible = false;
+    weaponGroup.visible = true;
+    rebuildWeaponScene();
+    renderWeaponFields();
+    renderInspector();
+  } else {
+    grid.visible = true;
+    boundsHelper.visible = layers.bounds;
+    weaponGrid.visible = false;
+    mapGroup.visible = true;
+    weaponGroup.visible = false;
+    scene.background = new THREE.Color(numberOr(map.sky, colors.floor));
+    scene.fog = new THREE.Fog(numberOr(map.fog, map.sky), numberOr(map.fogNear, 60), numberOr(map.fogFar, 180));
+    grid.material.color.set(numberOr(map.gridA, colors.gridA));
+    grid.material.vertexColors = false;
+    rebuildMap();
+    updateBoundsHelper();
+    renderMapFields();
+    renderInspector();
+    renderVisibility();
+    updateExport();
+    renderValidation(validateMap());
+  }
 }
 
 function rebuildMap() {
@@ -592,27 +799,35 @@ function fieldTemplate(scope, path, label, value, type = "text", wide = false) {
   return `
     <label class="field ${wide ? "wide" : ""}" for="${id}">
       <span>${label}</span>
-      <input id="${id}" type="${type === "color" ? "color" : type}" data-scope="${scope}" data-path="${path}" value="${escapeHtml(valueText)}" ${type === "number" ? 'step="0.1"' : ""} />
+      <input id="${id}" type="${type === "color" ? "color" : type}" data-scope="${scope}" data-path="${path}" value="${escapeHtml(valueText)}" ${type === "number" ? 'step="0.01"' : ""} />
     </label>
   `;
 }
 
 function renderWeaponFields() {
   const fields = [
-    ["id", "Weapon ID", "text", true],
-    ["model", "GLB URL", "text", true],
-    ["scale", "Scale", "number"],
-    ["firstPersonOffset.x", "FP X", "number"],
-    ["firstPersonOffset.y", "FP Y", "number"],
-    ["firstPersonOffset.z", "FP Z", "number"],
-    ["thirdPersonOffset.x", "TP X", "number"],
-    ["thirdPersonOffset.y", "TP Y", "number"],
-    ["thirdPersonOffset.z", "TP Z", "number"],
+    ["label", "Label", "text"],
+    ["ammo", "Ammo", "number"],
+    ["damage", "Damage", "number"],
+    ["crit", "Crit Multiplier", "number"],
+    ["reload", "Reload Time", "number"],
+    ["fireDelay", "Fire Delay (ms)", "number"],
+    ["range", "Range", "number"],
+    ["spread", "Spread", "number"],
+    ["aimSpread", "Aim Spread", "number"],
+    ["moveScale", "Move Speed Multiplier", "number"],
+    ["scale", "Render Scale", "number"],
+    ["firstPersonOffset.x", "FP Offset X", "number"],
+    ["firstPersonOffset.y", "FP Offset Y", "number"],
+    ["firstPersonOffset.z", "FP Offset Z", "number"],
     ["muzzle.x", "Muzzle X", "number"],
     ["muzzle.y", "Muzzle Y", "number"],
     ["muzzle.z", "Muzzle Z", "number"],
   ];
-  $("#weapon-fields").innerHTML = fields.map(([path, label, type, wide]) => fieldTemplate("weapon", path, label, getByPath(weaponConfig, path), type, wide)).join("");
+  const weapon = getActiveWeapon();
+  if (weapon) {
+    $("#weapon-fields").innerHTML = fields.map(([path, label, type, wide]) => fieldTemplate("weapon", path, label, getByPath(weapon, path), type, wide)).join("");
+  }
   updateWeaponOutput();
 }
 
@@ -623,6 +838,7 @@ function selectMesh(mesh) {
   applyHighlight(mesh, true);
   transform.attach(mesh);
   renderInspector();
+  switchTab("inspect");
 }
 
 function clearSelection() {
@@ -650,6 +866,11 @@ function applyHighlight(mesh, enabled) {
 
 function getSelectedData() {
   if (!selected) return null;
+  if (editingMode === "weapon") {
+    if (selected.kind === "parts") return getActiveWeapon()?.parts?.[selected.index] || null;
+    if (selected.kind === "muzzle") return getActiveWeapon()?.muzzle || null;
+    return null;
+  }
   return map[selected.kind]?.[selected.index] || null;
 }
 
@@ -713,6 +934,19 @@ function selectAfterRebuild(kind, index) {
 }
 
 function duplicateSelection() {
+  if (editingMode === "weapon") {
+    const weapon = getActiveWeapon();
+    if (!weapon || !selected || selected.kind !== "parts") return;
+    const part = weapon.parts?.[selected.index];
+    if (!part) return;
+    const copy = structuredClone(part);
+    copy.name = uniquePartName(copy.type);
+    copy.x += 0.05;
+    weapon.parts.push(copy);
+    renderAll();
+    selectAfterRebuild("parts", weapon.parts.length - 1);
+    return;
+  }
   const data = getSelectedData();
   if (!selected || !data) return;
   const before = mapSnapshot();
@@ -725,6 +959,14 @@ function duplicateSelection() {
 }
 
 function deleteSelection() {
+  if (editingMode === "weapon") {
+    const weapon = getActiveWeapon();
+    if (!weapon || !selected || selected.kind !== "parts") return;
+    weapon.parts.splice(selected.index, 1);
+    clearSelection();
+    renderAll();
+    return;
+  }
   if (!selected) return;
   const before = mapSnapshot();
   map[selected.kind].splice(selected.index, 1);
@@ -757,6 +999,39 @@ function sceneCenterOnGround() {
 
 function syncDataFromMesh(mesh, bakeScale = false) {
   const kind = mesh.userData.kind;
+  if (editingMode === "weapon") {
+    if (kind === "muzzle") {
+      const target = getActiveWeapon()?.muzzle;
+      if (target) {
+        target.x = roundMaybe(mesh.position.x);
+        target.y = roundMaybe(mesh.position.y);
+        target.z = roundMaybe(mesh.position.z);
+      }
+    } else if (kind === "parts") {
+      const target = getActiveWeapon()?.parts?.[mesh.userData.index];
+      if (target) {
+        target.x = roundMaybe(mesh.position.x);
+        target.y = roundMaybe(mesh.position.y);
+        target.z = roundMaybe(mesh.position.z);
+        target.rotX = roundMaybe(mesh.rotation.x);
+        target.rotY = roundMaybe(mesh.rotation.y);
+        target.rotZ = roundMaybe(mesh.rotation.z);
+        if (bakeScale) {
+          const base = mesh.userData.baseScale || {};
+          target.sx = roundMaybe(positive(base.sx, target.sx) * Math.abs(mesh.scale.x));
+          target.sy = roundMaybe(positive(base.sy, target.sy) * Math.abs(mesh.scale.y));
+          target.sz = roundMaybe(positive(base.sz, target.sz) * Math.abs(mesh.scale.z));
+        }
+      }
+    }
+    if (bakeScale) rebuildWeaponScene();
+    else {
+      renderWeaponFields();
+      updateWeaponOutput();
+    }
+    return;
+  }
+
   const data = map[kind]?.[mesh.userData.index];
   if (!data) return;
 
@@ -829,6 +1104,15 @@ function updateSnapSettings() {
 }
 
 function setInputValue(scope, path, rawValue, checked, inputType) {
+  if (editingMode === "weapon") {
+    const target = scope === "map" ? null : scope === "object" ? getSelectedData() : getActiveWeapon();
+    if (!target) return;
+    const value = parseFieldValue(rawValue, checked, inputType);
+    setByPath(target, path, value);
+    rebuildWeaponScene();
+    updateWeaponOutput();
+    return;
+  }
   const target = scope === "map" ? map : scope === "object" ? getSelectedData() : weaponConfig;
   if (!target) return;
   const value = parseFieldValue(rawValue, checked, inputType);
@@ -855,7 +1139,16 @@ function updateExport() {
 }
 
 function updateWeaponOutput() {
-  $("#weapon-output").value = JSON.stringify({ [weaponConfig.id || "weapon"]: weaponConfig }, null, 2);
+  if (editingMode === "weapon") {
+    if (loadedSingleWeapon) {
+      const current = weaponsData.weapons[activeWeaponId] || {};
+      $("#weapon-output").value = JSON.stringify(current, null, 2);
+    } else {
+      $("#weapon-output").value = JSON.stringify(weaponsData, null, 2);
+    }
+  } else {
+    $("#weapon-output").value = JSON.stringify({ [weaponConfig.id || "weapon"]: weaponConfig }, null, 2);
+  }
 }
 
 function cleanForExport(source) {
@@ -1056,6 +1349,39 @@ function exitQuickTest() {
 function switchTab(name) {
   document.querySelectorAll(".tab").forEach((button) => button.classList.toggle("active", button.dataset.tab === name));
   document.querySelectorAll(".tab-panel").forEach((panel) => panel.classList.toggle("active", panel.dataset.panel === name));
+  
+  if (name === "weapon" && editingMode !== "weapon") {
+    setEditorMode("weapon");
+  } else if (name === "map" && editingMode !== "map") {
+    setEditorMode("map");
+  }
+}
+
+function setEditorMode(mode) {
+  editingMode = mode;
+  const modeSelect = $("#editor-mode-select");
+  if (modeSelect) modeSelect.value = mode;
+  
+  const mapPlace = $("#map-place-tools");
+  const weaponPlace = $("#weapon-place-tools");
+  if (mapPlace) mapPlace.style.display = mode === "weapon" ? "none" : "grid";
+  if (weaponPlace) weaponPlace.style.display = mode === "weapon" ? "grid" : "none";
+  
+  const quickTest = $("#quick-test");
+  const validateMapBtn = $("#validate-map");
+  const mapLoadBtn = $("#map-load-button");
+  const sampleMapBtn = $("#sample-map");
+  const exportMapBtn = $("#export-map");
+  
+  const displayVal = mode === "weapon" ? "none" : "";
+  if (quickTest) quickTest.style.display = displayVal;
+  if (validateMapBtn) validateMapBtn.style.display = displayVal;
+  if (mapLoadBtn) mapLoadBtn.style.display = mode === "weapon" ? "none" : "inline-flex";
+  if (sampleMapBtn) sampleMapBtn.style.display = displayVal;
+  if (exportMapBtn) exportMapBtn.style.display = displayVal;
+  
+  clearSelection();
+  renderAll();
 }
 
 function downloadMap() {
@@ -1184,8 +1510,9 @@ transform.addEventListener("objectChange", () => {
   const object = transform.object;
   if (!object) return;
   if ($("#snap-enabled").checked && transform.mode === "translate") {
-    const size = gridSize();
+    const size = editingMode === "weapon" ? 0.01 : gridSize();
     object.position.x = snap(object.position.x, size);
+    object.position.y = snap(object.position.y, size);
     object.position.z = snap(object.position.z, size);
   }
   syncDataFromMesh(object, false);
@@ -1196,8 +1523,68 @@ transform.addEventListener("mouseUp", () => {
 });
 
 document.querySelectorAll("[data-add]").forEach((button) => button.addEventListener("click", () => addObject(button.dataset.add)));
+document.querySelectorAll("[data-add-part]").forEach((button) => button.addEventListener("click", () => addWeaponPart(button.dataset.addPart)));
 document.querySelectorAll("[data-mode]").forEach((button) => button.addEventListener("click", () => setTransformMode(button.dataset.mode)));
 document.querySelectorAll(".tab").forEach((button) => button.addEventListener("click", () => switchTab(button.dataset.tab)));
+
+$("#editor-mode-select")?.addEventListener("change", (e) => setEditorMode(e.target.value));
+
+$("#active-weapon-select")?.addEventListener("change", (e) => {
+  activeWeaponId = e.target.value;
+  clearSelection();
+  renderAll();
+});
+
+$("#weapons-file")?.addEventListener("change", async (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+  const text = await file.text();
+  try {
+    const data = JSON.parse(text);
+    const id = file.name.replace(/\.json$/i, "");
+    if (data.weapons) {
+      weaponsData = data;
+      activeWeaponId = Object.keys(weaponsData.weapons || {})[0] || "pistol";
+      loadedSingleWeapon = false;
+    } else if (data.parts) {
+      weaponsData = {
+        version: 1,
+        weapons: {
+          [id]: data
+        }
+      };
+      activeWeaponId = id;
+      loadedSingleWeapon = true;
+    } else {
+      throw new Error("Invalid weapons JSON format: must contain 'weapons' or 'parts'");
+    }
+    renderWeaponList();
+    if (editingMode === "weapon") {
+      clearSelection();
+      rebuildWeaponScene();
+    }
+  } catch (e) {
+    alert("Error parsing weapons JSON: " + e.message);
+  }
+});
+
+$("#export-weapons")?.addEventListener("click", () => {
+  updateWeaponOutput();
+  const blob = new Blob([$("#weapon-output").value], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = (editingMode === "weapon" && loadedSingleWeapon) ? `${activeWeaponId}.json` : "weapons.json";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+});
+
+$("#select-muzzle-tool")?.addEventListener("click", () => {
+  const muzzleMesh = selectable.find(item => item.userData.kind === "muzzle");
+  if (muzzleMesh) selectMesh(muzzleMesh);
+});
 
 $("#duplicate-object").addEventListener("click", duplicateSelection);
 $("#delete-object").addEventListener("click", deleteSelection);
@@ -1218,17 +1605,10 @@ $("#export-map").addEventListener("click", downloadMap);
 $("#quick-test").addEventListener("click", startQuickTest);
 $("#exit-test").addEventListener("click", () => fpsTest.stop());
 $("#copy-manifest").addEventListener("click", () => navigator.clipboard.writeText($("#manifest-entry").value));
-$("#weapon-preview").addEventListener("click", previewWeaponModel);
 $("#map-file").addEventListener("change", (event) => loadMapFile(event.target.files[0]));
 $("#grid-size").addEventListener("change", updateSnapSettings);
 $("#rotate-snap").addEventListener("change", updateSnapSettings);
 $("#snap-enabled").addEventListener("change", updateSnapSettings);
-
-document.addEventListener("input", (event) => {
-  const input = event.target.closest("[data-scope]");
-  if (!input) return;
-  setInputValue(input.dataset.scope, input.dataset.path, input.value, input.checked, input.type);
-});
 
 document.addEventListener("focusin", (event) => {
   const input = event.target.closest("[data-scope]");
@@ -1237,17 +1617,21 @@ document.addEventListener("focusin", (event) => {
 });
 
 document.addEventListener("change", (event) => {
-  const scopedInput = event.target.closest("[data-scope]");
-  if (scopedInput && scopedInput.dataset.scope !== "weapon") {
-    pushUndoSnapshot(pendingInputSnapshot);
-    pendingInputSnapshot = null;
+  const input = event.target.closest("[data-scope]");
+  if (input) {
+    if (input.dataset.scope !== "weapon") {
+      pushUndoSnapshot(pendingInputSnapshot);
+      pendingInputSnapshot = null;
+    }
+    setInputValue(input.dataset.scope, input.dataset.path, input.value, input.checked, input.type);
     return;
   }
 
-  const input = event.target.closest("[data-layer]");
-  if (!input) return;
-  layers[input.dataset.layer] = input.checked;
-  renderAll();
+  const layerInput = event.target.closest("[data-layer]");
+  if (layerInput) {
+    layers[layerInput.dataset.layer] = layerInput.checked;
+    renderAll();
+  }
 });
 
 document.addEventListener("keydown", (event) => {
@@ -1266,6 +1650,7 @@ window.addEventListener("resize", resize);
 resize();
 renderWeaponFields();
 renderAll();
+loadDefaultWeapons();
 updateHistoryButtons();
 updateSnapSettings();
 animate();
