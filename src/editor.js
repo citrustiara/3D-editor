@@ -596,7 +596,11 @@ function addSelectable(mesh, kind, index) {
   mesh.userData.kind = kind;
   mesh.userData.index = index;
   selectable.push(mesh);
-  mapGroup.add(mesh);
+  if (editingMode === "weapon") {
+    weaponGroup.add(mesh);
+  } else {
+    mapGroup.add(mesh);
+  }
 }
 
 function createFloorMesh(floor) {
@@ -1027,6 +1031,7 @@ function syncDataFromMesh(mesh, bakeScale = false) {
     if (bakeScale) rebuildWeaponScene();
     else {
       renderWeaponFields();
+      renderInspector();
       updateWeaponOutput();
     }
     return;
@@ -1373,12 +1378,33 @@ function setEditorMode(mode) {
   const sampleMapBtn = $("#sample-map");
   const exportMapBtn = $("#export-map");
   
+  const weaponLoadBtn = $("#weapon-load-button");
+  const exportWeaponsBtn = $("#export-weapons");
+  
   const displayVal = mode === "weapon" ? "none" : "";
   if (quickTest) quickTest.style.display = displayVal;
   if (validateMapBtn) validateMapBtn.style.display = displayVal;
   if (mapLoadBtn) mapLoadBtn.style.display = mode === "weapon" ? "none" : "inline-flex";
   if (sampleMapBtn) sampleMapBtn.style.display = displayVal;
   if (exportMapBtn) exportMapBtn.style.display = displayVal;
+  
+  const weaponDisplayVal = mode === "weapon" ? "inline-flex" : "none";
+  if (weaponLoadBtn) weaponLoadBtn.style.display = weaponDisplayVal;
+  if (exportWeaponsBtn) exportWeaponsBtn.style.display = weaponDisplayVal;
+  
+  const gridSizeInput = $("#grid-size");
+  if (gridSizeInput) {
+    if (mode === "weapon") {
+      gridSizeInput.min = "0.01";
+      gridSizeInput.step = "0.01";
+      gridSizeInput.value = "0.02"; // default weapon snap grid: 2cm
+    } else {
+      gridSizeInput.min = "0.25";
+      gridSizeInput.step = "0.25";
+      gridSizeInput.value = "1.0"; // default map snap grid: 1m
+    }
+    updateSnapSettings();
+  }
   
   clearSelection();
   renderAll();
@@ -1447,7 +1473,8 @@ function snap(value, size) {
 }
 
 function gridSize() {
-  return Math.max(0.1, Number($("#grid-size").value) || 1);
+  const minVal = editingMode === "weapon" ? 0.001 : 0.1;
+  return Math.max(minVal, Number($("#grid-size").value) || (editingMode === "weapon" ? 0.02 : 1));
 }
 
 function rotationSnapRadians() {
@@ -1510,7 +1537,7 @@ transform.addEventListener("objectChange", () => {
   const object = transform.object;
   if (!object) return;
   if ($("#snap-enabled").checked && transform.mode === "translate") {
-    const size = editingMode === "weapon" ? 0.01 : gridSize();
+    const size = gridSize();
     object.position.x = snap(object.position.x, size);
     object.position.y = snap(object.position.y, size);
     object.position.z = snap(object.position.z, size);

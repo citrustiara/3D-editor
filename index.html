@@ -37,6 +37,12 @@
           <button id="quick-test" type="button" title="Spawn into the current map">Test Spawn</button>
           <button id="validate-map" type="button" title="Run schema and gameplay validation">Validate</button>
           <button id="export-map" type="button" class="primary" title="Download the current FPS map JSON">Export</button>
+
+          <label class="file-button" id="weapon-load-button" title="Load a weapon JSON file" style="display: none;">
+            <input id="weapons-file" type="file" accept=".json,application/json" />
+            <span>Load JSON</span>
+          </label>
+          <button id="export-weapons" type="button" class="primary" title="Download weapons JSON" style="display: none;">Export</button>
         </div>
       </header>
 
@@ -133,16 +139,7 @@
           </section>
 
           <section class="tab-panel" data-panel="weapon">
-            <div class="panel-section">
-              <h2>Load / Save Weapons</h2>
-              <div style="display: flex; gap: 8px; margin-bottom: 8px;">
-                <label class="file-button" title="Load weapons JSON file" style="flex: 1;">
-                  <input id="weapons-file" type="file" accept=".json,application/json" />
-                  <span>Load weapons.json</span>
-                </label>
-                <button id="export-weapons" type="button" class="primary" title="Download weapons JSON" style="flex: 1;">Export Weapons</button>
-              </div>
-            </div>
+
             <div class="panel-section">
               <h2>Active Weapon</h2>
               <select id="active-weapon-select" style="margin-bottom: 12px;"></select>
