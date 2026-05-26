@@ -314,7 +314,7 @@ function redoMapChange() {
 }
 
 function restoreMapSnapshot(snapshot) {
-  fpsTest.stop(false);
+  fpsTest.stop();
   map = normalizeMap(JSON.parse(snapshot));
   selected = null;
   renderAll();
@@ -1165,6 +1165,9 @@ function animate() {
 }
 
 viewport.addEventListener("pointerdown", onPointerDown);
+renderer.domElement.addEventListener("contextmenu", (event) => {
+  if (fpsTest.active) event.preventDefault();
+});
 
 transform.addEventListener("dragging-changed", (event) => {
   orbit.enabled = !event.value;
