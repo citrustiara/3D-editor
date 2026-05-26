@@ -147,6 +147,9 @@ export class FpsTestRuntime {
   }
 
   updateMovement(dt) {
+    const wasGrounded = this.player.grounded;
+    const wasGroundSurface = this.player.groundSurface;
+
     const forward = new THREE.Vector3(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), this.yaw);
     const right = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), this.yaw);
     const wish = new THREE.Vector3();
@@ -165,7 +168,7 @@ export class FpsTestRuntime {
     this.player.pos.addScaledVector(this.player.vel, dt);
 
     this.resolveCeilingCollisions(previousY);
-    this.resolveGround(previousY);
+    this.resolveGround(previousY, wasGrounded, wasGroundSurface);
     this.resolveHorizontalCollisions(previousY);
     this.clampToArena();
     this.killIfFallen();
@@ -189,16 +192,32 @@ export class FpsTestRuntime {
     }
   }
 
-  resolveGround(previousY) {
-    const surfaceY = this.surfaceYAt(this.player.pos.x, this.player.pos.z, previousY, this.player.pos.y);
+  resolveGround(previousY, wasGrounded, wasGroundSurface) {
+    const surfaceY = this.surfaceYAt(this.player.pos.x, this.player.pos.z, previousY, this.player.pos.y, wasGrounded, wasGroundSurface);
     if (surfaceY === null) {
       this.player.grounded = false;
       this.player.groundSurface = null;
       return;
     }
 
-    const crossed = previousY >= surfaceY - LAND_TOLERANCE && this.player.pos.y <= surfaceY + GROUND_SNAP;
-    if (this.player.vel.y <= 0 && crossed) {
+    let keepGrounded = false;
+    if (wasGrounded) {
+      if (this.player.groundSurface === wasGroundSurface) {
+        keepGrounded = true;
+      } else {
+        const heightDiff = Math.abs(surfaceY - previousY);
+        if (heightDiff <= GROUND_SNAP) {
+          keepGrounded = true;
+        }
+      }
+    } else {
+      const crossed = previousY >= surfaceY - LAND_TOLERANCE && this.player.pos.y <= surfaceY + GROUND_SNAP;
+      if (crossed) {
+        keepGrounded = true;
+      }
+    }
+
+    if (this.player.vel.y <= 0 && keepGrounded) {
       this.player.pos.y = surfaceY;
       this.player.vel.y = 0;
       this.player.grounded = true;
@@ -227,7 +246,7 @@ export class FpsTestRuntime {
     }
   }
 
-  surfaceYAt(x, z, previousY = Infinity, currentY = previousY) {
+  surfaceYAt(x, z, previousY = Infinity, currentY = previousY, wasGrounded = false, wasGroundSurface = null) {
     let best = null;
     this.player.groundSurface = null;
     for (const floor of this.map?.floors || []) {
@@ -240,22 +259,27 @@ export class FpsTestRuntime {
       }
     }
     for (const platform of this.platformColliders) {
-      if (canSnapToSurface(platform.top, previousY, currentY) && pointInObbTop(x, z, platform, PLAYER_RADIUS) && (best === null || platform.top > best)) {
+      const canSnap = (wasGrounded && wasGroundSurface === platform) ? true : canSnapToSurface(platform.top, previousY, currentY);
+      if (canSnap && pointInObbTop(x, z, platform, PLAYER_RADIUS) && (best === null || platform.top > best)) {
         best = platform.top;
         this.player.groundSurface = platform;
       }
     }
     for (const collider of this.solidColliders) {
-      if (canSnapToSurface(collider.top, previousY, currentY) && pointInObbTop(x, z, collider, PLAYER_RADIUS) && (best === null || collider.top > best)) {
+      const canSnap = (wasGrounded && wasGroundSurface === collider) ? true : canSnapToSurface(collider.top, previousY, currentY);
+      if (canSnap && pointInObbTop(x, z, collider, PLAYER_RADIUS) && (best === null || collider.top > best)) {
         best = collider.top;
         this.player.groundSurface = collider;
       }
     }
     for (const ramp of this.rampColliders) {
       const y = rampSurfaceY(ramp, { x, z }, PLAYER_RADIUS);
-      if (y !== null && canSnapToRampSurface(y, previousY, currentY) && (best === null || y > best)) {
-        best = y;
-        this.player.groundSurface = ramp;
+      if (y !== null) {
+        const canSnap = (wasGrounded && wasGroundSurface === ramp) ? true : canSnapToRampSurface(y, previousY, currentY);
+        if (canSnap && (best === null || y > best)) {
+          best = y;
+          this.player.groundSurface = ramp;
+        }
       }
     }
     return best;
@@ -517,7 +541,7 @@ function resolveCircleVsRamp(position, ramp, radius) {
   const clampedZ = clamp(local.z, -halfLength, halfLength);
   const t = (clampedZ + halfLength) / ramp.length;
   const surfaceY = ramp.y + t * ramp.height;
-  if (position.y + PLAYER_HEIGHT < ramp.y || canSnapToRampSurface(surfaceY, position.y, position.y)) return;
+  if (position.y + PLAYER_HEIGHT < ramp.y || position.y >= surfaceY - GROUND_SNAP) return;
   if (local.z < -halfLength && position.y >= ramp.y - LAND_TOLERANCE) return;
 
   const candidates = [
