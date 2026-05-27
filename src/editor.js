@@ -49,7 +49,9 @@ const labels = {
 };
 
 let map = createSampleMap();
-let selected = null;
+let selected = null;          // single selection for backward compat: { kind, index } or null
+let selectionSet = [];        // multi-select: array of { kind, index }
+let multiGroup = null;        // Group at centroid for multi-select transforms
 let isTransforming = false;
 let weaponConfig = createWeaponConfig();
 let editorCameraState = null;
@@ -347,10 +349,25 @@ function rebuildWeaponScene() {
   muzzleMesh.position.set(muzzle.x, muzzle.y, muzzle.z);
   addSelectable(muzzleMesh, "muzzle", 0);
 
-  if (selected) {
-    const mesh = selectable.find((item) => item.userData.kind === selected.kind && item.userData.index === selected.index);
-    if (mesh) selectMesh(mesh);
-    else clearSelection();
+  if (selectionSet.length > 0) {
+    selectionSet = selectionSet.filter(e => {
+      return selectable.some(m => m.userData.kind === e.kind && m.userData.index === e.index);
+    });
+    selected = selectionSet.length > 0 ? selectionSet[0] : null;
+
+    if (selectionSet.length === 1) {
+      const mesh = selectable.find(m => m.userData.kind === selected.kind && m.userData.index === selected.index);
+      if (mesh) selectMesh(mesh);
+      else clearSelection();
+    } else if (selectionSet.length > 1) {
+      for (const entry of selectionSet) {
+        const mesh = selectable.find(m => m.userData.kind === entry.kind && m.userData.index === entry.index);
+        if (mesh) { mesh.userData.selected = true; applyHighlight(mesh, true); }
+      }
+      buildMultiGroup();
+    } else {
+      clearSelection();
+    }
   }
 }
 
@@ -482,6 +499,7 @@ function getHistorySnapshot() {
     activeWeaponId,
     loadedSingleWeapon,
     selected,
+    selectionSet,
     editingMode
   });
 }
@@ -518,8 +536,10 @@ function restoreHistorySnapshot(snapshotStr) {
   activeWeaponId = snapshot.activeWeaponId;
   loadedSingleWeapon = snapshot.loadedSingleWeapon;
   selected = snapshot.selected;
+  selectionSet = snapshot.selectionSet || (selected ? [selected] : []);
   editingMode = snapshot.editingMode;
 
+  clearMultiGroup();
   const modeSelect = $("#editor-mode-select");
   if (modeSelect) modeSelect.value = editingMode;
 
@@ -600,10 +620,28 @@ function rebuildMap() {
     map.assets.forEach((asset, index) => addAssetMesh(asset, index));
   }
 
-  if (selected) {
-    const mesh = selectable.find((item) => item.userData.kind === selected.kind && item.userData.index === selected.index);
-    if (mesh) selectMesh(mesh);
-    else clearSelection();
+  if (selectionSet.length > 0) {
+    // Filter out entries whose data no longer exists
+    selectionSet = selectionSet.filter(e => {
+      if (editingMode === "weapon") return false; // weapon handled separately
+      return map[e.kind]?.[e.index] != null;
+    });
+    selected = selectionSet.length > 0 ? selectionSet[0] : null;
+
+    if (selectionSet.length === 1) {
+      const mesh = selectable.find(m => m.userData.kind === selected.kind && m.userData.index === selected.index);
+      if (mesh) selectMesh(mesh);
+      else clearSelection();
+    } else if (selectionSet.length > 1) {
+      // Re-highlight all and build multi-group
+      for (const entry of selectionSet) {
+        const mesh = selectable.find(m => m.userData.kind === entry.kind && m.userData.index === entry.index);
+        if (mesh) { mesh.userData.selected = true; applyHighlight(mesh, true); }
+      }
+      buildMultiGroup();
+    } else {
+      clearSelection();
+    }
   }
 }
 
@@ -775,13 +813,32 @@ function renderMapFields() {
 function renderInspector() {
   const inspector = $("#inspector");
   const empty = $("#inspector-empty");
-  if (!selected) {
+
+  if (selectionSet.length === 0) {
     inspector.innerHTML = "";
     empty.style.display = "block";
     $("#selection-label").textContent = "Nothing selected";
     return;
   }
 
+  if (selectionSet.length > 1) {
+    // Multi-select summary
+    const counts = {};
+    for (const entry of selectionSet) {
+      const label = labels[entry.kind] || entry.kind;
+      counts[label] = (counts[label] || 0) + 1;
+    }
+    const summary = Object.entries(counts).map(([k, v]) => `${v}× ${k}`).join(", ");
+    $("#selection-label").textContent = `${selectionSet.length} objects selected`;
+    empty.style.display = "none";
+    inspector.innerHTML = `<div class="empty-state" style="border-style:solid;border-color:rgba(60,182,163,0.4)">
+      <strong>${selectionSet.length} objects selected</strong><br>${summary}<br><br>
+      <span style="color:var(--muted);font-size:11px">Use Move / Rotate / Scale to transform together.<br>
+      Delete or Duplicate applies to all selected.</span></div>`;
+    return;
+  }
+
+  // Single selection
   const data = getSelectedData();
   if (!data) {
     clearSelection();
@@ -851,7 +908,9 @@ function renderWeaponFields() {
 }
 
 function selectMesh(mesh) {
+  clearMultiGroup();
   selected = { kind: mesh.userData.kind, index: mesh.userData.index };
+  selectionSet = [{ kind: mesh.userData.kind, index: mesh.userData.index }];
   clearHighlight();
   mesh.userData.selected = true;
   applyHighlight(mesh, true);
@@ -860,9 +919,95 @@ function selectMesh(mesh) {
   switchTab("inspect");
 }
 
+function toggleMeshInSelection(mesh) {
+  const kind = mesh.userData.kind, index = mesh.userData.index;
+  const idx = selectionSet.findIndex(s => s.kind === kind && s.index === index);
+  if (idx >= 0) {
+    selectionSet.splice(idx, 1);
+    mesh.userData.selected = false;
+    applyHighlight(mesh, false);
+  } else {
+    selectionSet.push({ kind, index });
+    mesh.userData.selected = true;
+    applyHighlight(mesh, true);
+  }
+  // Update selected for single-select compat (inspector)
+  selected = selectionSet.length === 1 ? { ...selectionSet[0] } : selectionSet.length > 0 ? selectionSet[0] : null;
+  updateTransformTarget();
+  renderInspector();
+  if (selectionSet.length > 0) switchTab("inspect");
+}
+
+function updateTransformTarget() {
+  if (selectionSet.length === 0) {
+    clearMultiGroup();
+    transform.detach();
+  } else if (selectionSet.length === 1) {
+    clearMultiGroup();
+    const m = findMeshByEntry(selectionSet[0]);
+    if (m) transform.attach(m);
+  } else {
+    buildMultiGroup();
+  }
+}
+
+function buildMultiGroup() {
+  clearMultiGroup();
+  const meshes = selectionSet.map(e => findMeshByEntry(e)).filter(Boolean);
+  if (meshes.length < 2) return;
+  const centroid = new THREE.Vector3();
+  meshes.forEach(m => centroid.add(m.position));
+  centroid.divideScalar(meshes.length);
+  multiGroup = new THREE.Group();
+  multiGroup.position.copy(centroid);
+  multiGroup.userData._isMultiGroup = true;
+  multiGroup.userData._offsets = meshes.map(m => ({
+    kind: m.userData.kind, index: m.userData.index,
+    offset: m.position.clone().sub(centroid),
+    initRot: m.rotation.clone(),
+    initScale: m.scale.clone(),
+  }));
+  scene.add(multiGroup);
+  transform.attach(multiGroup);
+}
+
+function clearMultiGroup() {
+  if (!multiGroup) return;
+  if (transform.object === multiGroup) transform.detach();
+  scene.remove(multiGroup);
+  multiGroup = null;
+}
+
+function syncMultiGroupToMeshes(bakeScale) {
+  if (!multiGroup || !multiGroup.userData._offsets) return;
+  const gPos = multiGroup.position, gQuat = multiGroup.quaternion, gScale = multiGroup.scale;
+  for (const info of multiGroup.userData._offsets) {
+    const mesh = findMeshByEntry(info);
+    if (!mesh) continue;
+    const off = info.offset.clone().applyQuaternion(gQuat).multiply(gScale);
+    mesh.position.copy(gPos).add(off);
+    const mq = new THREE.Quaternion().setFromEuler(info.initRot);
+    mq.premultiply(gQuat);
+    mesh.rotation.setFromQuaternion(mq);
+    if (bakeScale) mesh.scale.copy(info.initScale).multiply(gScale);
+  }
+}
+
+function refreshMultiGroupOffsets() {
+  if (!multiGroup) return;
+  clearMultiGroup();
+  if (selectionSet.length > 1) buildMultiGroup();
+}
+
+function findMeshByEntry(entry) {
+  return selectable.find(m => m.userData.kind === entry.kind && m.userData.index === entry.index) || null;
+}
+
 function clearSelection() {
   selected = null;
+  selectionSet = [];
   clearHighlight();
+  clearMultiGroup();
   transform.detach();
   renderInspector();
 }
@@ -906,13 +1051,19 @@ function onPointerDown(event) {
   pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
   const hits = raycaster.intersectObjects(selectable, true);
+  const isMultiKey = event.shiftKey || event.ctrlKey || event.metaKey;
   if (!hits.length) {
-    clearSelection();
+    if (!isMultiKey) clearSelection();
     return;
   }
   let target = hits[0].object;
   while (target.parent && !target.userData.kind) target = target.parent;
-  if (target.userData.kind) selectMesh(target);
+  if (!target.userData.kind) return;
+  if (isMultiKey) {
+    toggleMeshInSelection(target);
+  } else {
+    selectMesh(target);
+  }
 }
 
 function addObject(kind) {
@@ -948,6 +1099,7 @@ function addObject(kind) {
 
 function selectAfterRebuild(kind, index) {
   selected = { kind, index };
+  selectionSet = [{ kind, index }];
   renderAll();
   switchTab("inspect");
 }
@@ -957,40 +1109,72 @@ function duplicateSelection() {
   if (editingMode === "weapon") {
     const weapon = getActiveWeapon();
     if (!weapon || !selected || selected.kind !== "parts") return;
-    const part = weapon.parts?.[selected.index];
-    if (!part) return;
-    const copy = structuredClone(part);
-    copy.name = uniquePartName(copy.type);
-    copy.x += 0.05;
-    weapon.parts.push(copy);
+    // Multi-select: duplicate all selected weapon parts
+    const newEntries = [];
+    for (const entry of selectionSet) {
+      if (entry.kind !== "parts") continue;
+      const part = weapon.parts?.[entry.index];
+      if (!part) continue;
+      const copy = structuredClone(part);
+      copy.name = uniquePartName(copy.type);
+      copy.x += 0.05;
+      weapon.parts.push(copy);
+      newEntries.push({ kind: "parts", index: weapon.parts.length - 1 });
+    }
+    if (!newEntries.length) return;
     pushUndoSnapshot(before);
+    selectionSet = newEntries;
+    selected = newEntries[0];
     renderAll();
-    selectAfterRebuild("parts", weapon.parts.length - 1);
+    switchTab("inspect");
     return;
   }
-  const data = getSelectedData();
-  if (!selected || !data) return;
-  const copy = structuredClone(data);
-  if ("name" in copy) copy.name = uniqueName(copy.name || selected.kind);
-  nudgeData(copy);
-  map[selected.kind].push(copy);
+  if (!selectionSet.length) return;
+  // Multi-select: duplicate all selected map objects
+  const newEntries = [];
+  for (const entry of selectionSet) {
+    const data = map[entry.kind]?.[entry.index];
+    if (!data) continue;
+    const copy = structuredClone(data);
+    if ("name" in copy) copy.name = uniqueName(copy.name || entry.kind);
+    nudgeData(copy);
+    map[entry.kind].push(copy);
+    newEntries.push({ kind: entry.kind, index: map[entry.kind].length - 1 });
+  }
+  if (!newEntries.length) return;
   pushUndoSnapshot(before);
-  selectAfterRebuild(selected.kind, map[selected.kind].length - 1);
+  selectionSet = newEntries;
+  selected = newEntries[0];
+  renderAll();
+  switchTab("inspect");
 }
 
 function deleteSelection() {
   const before = getHistorySnapshot();
   if (editingMode === "weapon") {
     const weapon = getActiveWeapon();
-    if (!weapon || !selected || selected.kind !== "parts") return;
-    weapon.parts.splice(selected.index, 1);
+    if (!weapon || !selectionSet.length) return;
+    // Collect part indices to delete, sort descending so splice doesn't shift earlier indices
+    const indices = selectionSet
+      .filter(e => e.kind === "parts")
+      .map(e => e.index)
+      .sort((a, b) => b - a);
+    for (const i of indices) weapon.parts.splice(i, 1);
     clearSelection();
     pushUndoSnapshot(before);
     renderAll();
     return;
   }
-  if (!selected) return;
-  map[selected.kind].splice(selected.index, 1);
+  if (!selectionSet.length) return;
+  // Group by kind, sort indices descending per kind
+  const byKind = {};
+  for (const entry of selectionSet) {
+    (byKind[entry.kind] ||= []).push(entry.index);
+  }
+  for (const kind in byKind) {
+    byKind[kind].sort((a, b) => b - a);
+    for (const i of byKind[kind]) map[kind].splice(i, 1);
+  }
   clearSelection();
   pushUndoSnapshot(before);
   renderAll();
@@ -1500,6 +1684,7 @@ async function loadMapFile(file) {
   const before = getHistorySnapshot();
   map = normalizeMap(JSON.parse(text));
   selected = null;
+  selectionSet = [];
   pushUndoSnapshot(before);
   renderAll();
 }
@@ -1669,6 +1854,16 @@ transform.addEventListener("dragging-changed", (event) => {
   if (event.value) {
     transformStartSnapshot = getHistorySnapshot();
   } else {
+    // On drag end, sync multi-group and refresh offsets
+    if (multiGroup && transform.object === multiGroup) {
+      syncMultiGroupToMeshes(transform.mode === "scale");
+      // Sync all selected meshes to data
+      for (const entry of selectionSet) {
+        const mesh = findMeshByEntry(entry);
+        if (mesh) syncDataFromMesh(mesh, transform.mode === "scale");
+      }
+      refreshMultiGroupOffsets();
+    }
     pushUndoSnapshot(transformStartSnapshot);
     transformStartSnapshot = null;
   }
@@ -1683,11 +1878,31 @@ transform.addEventListener("objectChange", () => {
     object.position.y = snap(object.position.y, size);
     object.position.z = snap(object.position.z, size);
   }
-  syncDataFromMesh(object, false);
+  if (multiGroup && object === multiGroup) {
+    // Multi-select: sync group transform to child meshes
+    syncMultiGroupToMeshes(false);
+    for (const entry of selectionSet) {
+      const mesh = findMeshByEntry(entry);
+      if (mesh) syncDataFromMesh(mesh, false);
+    }
+  } else {
+    syncDataFromMesh(object, false);
+  }
 });
 
 transform.addEventListener("mouseUp", () => {
-  if (transform.object) syncDataFromMesh(transform.object, transform.mode === "scale");
+  const object = transform.object;
+  if (!object) return;
+  if (multiGroup && object === multiGroup) {
+    syncMultiGroupToMeshes(transform.mode === "scale");
+    for (const entry of selectionSet) {
+      const mesh = findMeshByEntry(entry);
+      if (mesh) syncDataFromMesh(mesh, transform.mode === "scale");
+    }
+    refreshMultiGroupOffsets();
+  } else {
+    syncDataFromMesh(object, transform.mode === "scale");
+  }
 });
 
 document.querySelectorAll("[data-add]").forEach((button) => button.addEventListener("click", () => addObject(button.dataset.add)));
@@ -1744,6 +1959,7 @@ $("#sample-map").addEventListener("click", () => {
   const before = getHistorySnapshot();
   map = createSampleMap();
   selected = null;
+  selectionSet = [];
   pushUndoSnapshot(before);
   renderAll();
 });
@@ -1787,27 +2003,55 @@ document.addEventListener("keydown", (event) => {
   const isUndo = (event.ctrlKey || event.metaKey) && event.code === "KeyZ";
   const isRedo = (event.ctrlKey || event.metaKey) && (event.code === "KeyY" || (event.shiftKey && event.code === "KeyZ"));
   const isSave = (event.ctrlKey || event.metaKey) && event.code === "KeyS";
+  const isSelectAll = (event.ctrlKey || event.metaKey) && event.code === "KeyA";
+  const isDuplicate = (event.ctrlKey || event.metaKey) && event.code === "KeyD";
+  const isDelete = event.code === "Delete" || event.code === "KeyX";
+
+  const target = event.target;
+  const isInInput = target instanceof HTMLTextAreaElement || (target instanceof HTMLInputElement && target.type !== "checkbox");
 
   if (isSave) {
     event.preventDefault();
-    if (document.activeElement && document.activeElement.blur) {
-      document.activeElement.blur();
-    }
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
     exportCurrentFile();
+    return;
+  }
+
+  if (isInInput) {
+    // Only handle undo/redo inside inputs (let browser handle the rest)
+    if (!isUndo && !isRedo) return;
+    return;
+  }
+
+  if (isSelectAll) {
+    event.preventDefault();
+    if (fpsTest.active || !selectable.length) return;
+    selectionSet = selectable.map(m => ({ kind: m.userData.kind, index: m.userData.index }));
+    selected = selectionSet[0] || null;
+    clearHighlight();
+    selectable.forEach(m => { m.userData.selected = true; applyHighlight(m, true); });
+    if (selectionSet.length > 1) buildMultiGroup();
+    else if (selectionSet.length === 1) { const m = findMeshByEntry(selectionSet[0]); if (m) transform.attach(m); }
+    renderInspector();
+    return;
+  }
+
+  if (isDuplicate) {
+    event.preventDefault();
+    duplicateSelection();
+    return;
+  }
+
+  if (isDelete && !event.ctrlKey && !event.metaKey) {
+    event.preventDefault();
+    deleteSelection();
     return;
   }
 
   if (!isUndo && !isRedo) return;
 
-  const target = event.target;
-  if (target instanceof HTMLTextAreaElement || (target instanceof HTMLInputElement && target.type === "text")) {
-    return;
-  }
-
   event.preventDefault();
-  if (document.activeElement && document.activeElement.blur) {
-    document.activeElement.blur();
-  }
+  if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
   if (isRedo) redoChange();
   else undoChange();
 });
