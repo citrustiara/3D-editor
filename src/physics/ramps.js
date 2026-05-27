@@ -1,18 +1,39 @@
-import * as THREE from "three";
+import * as THREE from "https://esm.sh/three@0.165.0";
 
 export function normalizeRamp(def = {}) {
-  const width = Number(def.width ?? def.sx ?? 4);
-  const length = Number(def.length ?? def.sz ?? 8);
+  const scale = normalizeScale(def.scale);
+  const width = positiveNumber(def.width ?? def.sx ?? 4, 4) * scale.x;
+  const length = positiveNumber(def.length ?? def.sz ?? 8, 8) * scale.z;
+  const position = def.position || {};
+  const rotation = def.rotation || {};
   return {
     ...def,
-    x: Number(def.x || 0),
-    y: Number(def.y ?? 1),
-    z: Number(def.z || 0),
+    x: finiteNumber(def.x ?? position.x, 0),
+    y: finiteNumber(def.y ?? position.y, 1),
+    z: finiteNumber(def.z ?? position.z, 0),
     width,
     length,
-    height: Number(def.height ?? def.sy ?? 2),
-    rot: Number(def.rot ?? def.rotY ?? 0),
+    height: positiveNumber(def.height ?? def.sy ?? 2, 2) * scale.y,
+    rot: finiteNumber(def.rot ?? def.rotY ?? rotation.y, 0),
   };
+}
+
+function normalizeScale(scale) {
+  if (typeof scale === "number") return { x: Math.abs(scale), y: Math.abs(scale), z: Math.abs(scale) };
+  return {
+    x: positiveNumber(scale?.x, 1),
+    y: positiveNumber(scale?.y, 1),
+    z: positiveNumber(scale?.z, 1),
+  };
+}
+
+function finiteNumber(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function positiveNumber(value, fallback) {
+  return Math.max(0.001, Math.abs(finiteNumber(value, fallback)));
 }
 
 export function makeRampGeometry(def = {}) {

@@ -1,15 +1,14 @@
-import * as THREE from "three";
+import * as THREE from "https://esm.sh/three@0.165.0";
 import { makeRampGeometry, normalizeRamp, rampSurfaceY } from "./ramps.js";
 
 const PLAYER_RADIUS = 0.42;
 const PLAYER_EYE_HEIGHT = 1.58;
 const PLAYER_HEIGHT = 1.78;
-const GRAVITY = 24;
-const WALK_SPEED = 8.5;
-const SPRINT_SPEED = 12;
-const JUMP_SPEED = 8.2;
-const LAND_TOLERANCE = 0.04;
-const GROUND_SNAP = 0.18;
+const GRAVITY = 30;
+const WALK_SPEED = 14.5;
+const JUMP_SPEED = 9.2;
+const LAND_TOLERANCE = 0.2;
+const GROUND_SNAP = 0.28;
 const DEATH_DROP = 10;
 
 export class FpsTestRuntime {
@@ -36,7 +35,12 @@ export class FpsTestRuntime {
       vel: new THREE.Vector3(),
       grounded: false,
       groundSurface: null,
+      sliding: false,
     };
+    this.slideTimer = 0;
+    this.slideCooldown = 0;
+    this.slideKeyWasDown = false;
+    this.currentCamHeight = PLAYER_EYE_HEIGHT;
     this.group = new THREE.Group();
     this.group.name = "fps-test-runtime";
     this.colliderGroup = new THREE.Group();
@@ -159,9 +163,43 @@ export class FpsTestRuntime {
     if (this.keys.has("KeyA")) wish.sub(right);
     if (wish.lengthSq() > 0) wish.normalize();
 
-    const speed = this.keys.has("ShiftLeft") || this.keys.has("ShiftRight") ? SPRINT_SPEED : WALK_SPEED;
-    this.player.vel.x = wish.x * speed;
-    this.player.vel.z = wish.z * speed;
+    const slideKey = this.keys.has("ShiftLeft") || this.keys.has("ShiftRight") || this.keys.has("ControlLeft");
+    const slidePressed = slideKey && !this.slideKeyWasDown;
+    const wantsSlide = slidePressed && this.player.grounded && wish.lengthSq() > 0 && this.slideCooldown <= 0;
+
+    if (wantsSlide) {
+      this.slideTimer = 0.58;
+      this.slideCooldown = 0.65;
+      this.player.vel.addScaledVector(wish, 7.5);
+    }
+    this.player.sliding = this.slideTimer > 0 && this.player.grounded;
+    this.slideKeyWasDown = slideKey;
+
+    if (this.slideTimer > 0) this.slideTimer -= dt;
+    if (this.slideCooldown > 0) this.slideCooldown -= dt;
+
+    // Snappy movement: accel 220, friction 0.80 when moving, 0.65 when stopping
+    const accel = this.player.sliding ? 32 : (this.player.grounded ? 220 : 25);
+    const maxSpeed = this.player.sliding ? 22 : WALK_SPEED;
+    this.player.vel.addScaledVector(wish, accel * dt);
+    
+    const baseFriction = this.player.sliding ? 0.976 : (this.player.grounded ? (wish.lengthSq() > 0 ? 0.80 : 0.65) : 0.985);
+    const friction = Math.pow(baseFriction, dt * 60);
+    this.player.vel.x *= friction;
+    this.player.vel.z *= friction;
+    
+    const horiz = Math.hypot(this.player.vel.x, this.player.vel.z);
+    if (horiz > maxSpeed) {
+      const s = maxSpeed / horiz;
+      this.player.vel.x *= s;
+      this.player.vel.z *= s;
+    }
+
+    if (this.keys.has("Space") && this.player.grounded) {
+      this.player.vel.y = JUMP_SPEED;
+      this.player.grounded = false;
+    }
+
     this.player.vel.y -= GRAVITY * dt;
 
     const previousY = this.player.pos.y;
@@ -173,6 +211,13 @@ export class FpsTestRuntime {
     this.clampToArena();
     this.killIfFallen();
     this.body.position.copy(this.player.pos);
+    
+    // Smooth camera height transitions
+    this.currentCamHeight = THREE.MathUtils.lerp(
+      this.currentCamHeight || PLAYER_EYE_HEIGHT,
+      this.player.sliding ? 0.8 : PLAYER_EYE_HEIGHT,
+      dt * 10
+    );
   }
 
   resolveCeilingCollisions(previousY) {
@@ -228,7 +273,7 @@ export class FpsTestRuntime {
   }
 
   resolveHorizontalCollisions(previousY) {
-    for (const collider of this.solidColliders) {
+    for (const collider of [...this.solidColliders, ...this.platformColliders]) {
       if (
         this.player.grounded &&
         (this.player.groundSurface === collider ||
@@ -236,7 +281,9 @@ export class FpsTestRuntime {
       ) {
         continue;
       }
-      const canStepOn = previousY >= collider.top - LAND_TOLERANCE && this.player.vel.y <= 0;
+      const canStepOn = previousY >= collider.top - LAND_TOLERANCE &&
+        this.player.vel.y <= 0 &&
+        pointInObbTop(this.player.pos.x, this.player.pos.z, collider, PLAYER_RADIUS);
       if (canStepOn) continue;
       if (this.player.pos.y + PLAYER_HEIGHT < collider.bottom || this.player.pos.y > collider.top) continue;
       resolveCircleVsObb(this.player.pos, collider, PLAYER_RADIUS);
@@ -421,15 +468,13 @@ export class FpsTestRuntime {
       this.colliderGroup.add(mesh);
     }
     for (const box of [...getSolidBoxes(this.map), ...(this.map?.platforms || [])]) {
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(Number(box.sx || 1), Number(box.sy || 1), Number(box.sz || 1)), material);
-      mesh.position.set(Number(box.x || 0), Number(box.y || 0) + Number(box.sy || 1) / 2, Number(box.z || 0));
-      mesh.rotation.set(Number(box.rotX || 0), Number(box.rotY || 0), Number(box.rotZ || 0));
-      this.colliderGroup.add(mesh);
+      this.colliderGroup.add(createBoxColliderMesh(box, material));
     }
     for (const ramp of this.map?.ramps || []) {
-      const mesh = new THREE.Mesh(makeRampGeometry(ramp), material);
-      mesh.position.set(Number(ramp.x || 0), Number(ramp.y ?? 1), Number(ramp.z || 0));
-      mesh.rotation.y = Number(ramp.rot || 0);
+      const normalized = normalizeRamp(ramp);
+      const mesh = new THREE.Mesh(makeRampGeometry(normalized), material);
+      mesh.position.set(normalized.x, normalized.y, normalized.z);
+      mesh.rotation.y = normalized.rot;
       this.colliderGroup.add(mesh);
     }
   }
@@ -439,7 +484,7 @@ export class FpsTestRuntime {
     this.camera.rotation.y = this.yaw;
     this.camera.rotation.x = this.pitch;
     this.camera.rotation.z = 0;
-    this.camera.position.set(this.player.pos.x, this.player.pos.y + PLAYER_EYE_HEIGHT, this.player.pos.z);
+    this.camera.position.set(this.player.pos.x, this.player.pos.y + (this.currentCamHeight || PLAYER_EYE_HEIGHT), this.player.pos.z);
   }
 
   setStatus(text) {
@@ -463,6 +508,7 @@ function getSolidBoxes(map) {
     ...(map?.boxes || []),
     ...(map?.collision || []),
     ...(map?.decor || []).filter((item) => item.collidable),
+    ...(map?.assets || []).filter((item) => item.collidable && hasBoxStats(item)),
   ];
 }
 
@@ -491,15 +537,12 @@ function createRampCollider(rampDef) {
 }
 
 function createBoxCollider(box) {
-  const center = new THREE.Vector3(
-    Number(box.x || 0),
-    Number(box.y || 0) + Number(box.sy || 1) / 2,
-    Number(box.z || 0)
-  );
-  const rotation = new THREE.Euler(Number(box.rotX || 0), Number(box.rotY || 0), Number(box.rotZ || 0), "XYZ");
+  const stats = getBoxStats(box);
+  const center = new THREE.Vector3(stats.x, stats.y + stats.sy / 2, stats.z);
+  const rotation = new THREE.Euler(stats.rotX, stats.rotY, stats.rotZ, "XYZ");
   const quaternion = new THREE.Quaternion().setFromEuler(rotation);
   const inverseQuaternion = quaternion.clone().invert();
-  const halfSize = new THREE.Vector3(Number(box.sx || 1) / 2, Number(box.sy || 1) / 2, Number(box.sz || 1) / 2);
+  const halfSize = new THREE.Vector3(stats.sx / 2, stats.sy / 2, stats.sz / 2);
   const corners = [];
   for (const x of [-halfSize.x, halfSize.x]) {
     for (const y of [-halfSize.y, halfSize.y]) {
@@ -510,6 +553,7 @@ function createBoxCollider(box) {
   }
   return {
     box,
+    stats,
     center,
     quaternion,
     inverseQuaternion,
@@ -517,6 +561,59 @@ function createBoxCollider(box) {
     bottom: Math.min(...corners.map((corner) => corner.y)),
     top: Math.max(...corners.map((corner) => corner.y)),
   };
+}
+
+function createBoxColliderMesh(box, material) {
+  const stats = getBoxStats(box);
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(stats.sx, stats.sy, stats.sz), material);
+  mesh.position.set(stats.x, stats.y + stats.sy / 2, stats.z);
+  mesh.rotation.set(stats.rotX, stats.rotY, stats.rotZ);
+  return mesh;
+}
+
+function hasBoxStats(box = {}) {
+  return box.sx !== undefined || box.sy !== undefined || box.sz !== undefined ||
+    box.width !== undefined || box.height !== undefined || box.depth !== undefined ||
+    box.scale !== undefined;
+}
+
+function getBoxStats(box = {}) {
+  const position = box.position || {};
+  const rotation = box.rotation || {};
+  const scale = normalizeScale(box.scale);
+  const sx = positiveNumber(box.sx ?? box.width ?? box.size?.x ?? 1, 1) * scale.x;
+  const sy = positiveNumber(box.sy ?? box.height ?? box.size?.y ?? 1, 1) * scale.y;
+  const sz = positiveNumber(box.sz ?? box.depth ?? box.size?.z ?? 1, 1) * scale.z;
+  return {
+    x: finiteNumber(box.x ?? position.x, 0),
+    y: finiteNumber(box.y ?? position.y, 0),
+    z: finiteNumber(box.z ?? position.z, 0),
+    sx,
+    sy,
+    sz,
+    rotX: finiteNumber(box.rotX ?? rotation.x, 0),
+    rotY: finiteNumber(box.rotY ?? box.rot ?? rotation.y, 0),
+    rotZ: finiteNumber(box.rotZ ?? rotation.z, 0),
+  };
+}
+
+function normalizeScale(scale) {
+  if (typeof scale === "number") return { x: Math.abs(scale), y: Math.abs(scale), z: Math.abs(scale) };
+  return {
+    x: positiveNumber(scale?.x, 1),
+    y: positiveNumber(scale?.y, 1),
+    z: positiveNumber(scale?.z, 1),
+  };
+}
+
+function finiteNumber(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function positiveNumber(value, fallback) {
+  const number = finiteNumber(value, fallback);
+  return Math.max(0.001, Math.abs(number));
 }
 
 function pointInObbTop(x, z, collider, margin = 0) {
@@ -569,6 +666,11 @@ function resolveCircleVsObb(position, collider, radius) {
   const local = new THREE.Vector3(position.x, clamp(position.y, collider.bottom, collider.top), position.z)
     .sub(collider.center)
     .applyQuaternion(collider.inverseQuaternion);
+  const localYAxis = new THREE.Vector3(0, 1, 0).applyQuaternion(collider.quaternion);
+  const sinPhi = Math.sqrt(Math.max(0, 1 - localYAxis.y * localYAxis.y));
+  const maxProj = PLAYER_HEIGHT * Math.abs(localYAxis.y) + radius * sinPhi;
+  if (Math.abs(local.y) > collider.halfSize.y + maxProj) return;
+
   const closestX = clamp(local.x, -collider.halfSize.x, collider.halfSize.x);
   const closestZ = clamp(local.z, -collider.halfSize.z, collider.halfSize.z);
   let dx = local.x - closestX;
