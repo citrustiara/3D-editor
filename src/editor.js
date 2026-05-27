@@ -134,6 +134,8 @@ const history = {
   redo: [],
   limit: 80,
 };
+let mapFileHandle = null;
+let weaponFileHandle = null;
 
 const mapFields = [
   ["id", "ID", "text", true],
@@ -420,6 +422,7 @@ function renderWeaponList() {
 function addWeaponPart(type) {
   const weapon = getActiveWeapon();
   if (!weapon) return;
+  const before = getHistorySnapshot();
   weapon.parts ||= [];
   const part = {
     name: uniquePartName(type),
@@ -436,6 +439,7 @@ function addWeaponPart(type) {
     color: 0x1b1f24
   };
   weapon.parts.push(part);
+  pushUndoSnapshot(before);
   renderAll();
   selectAfterRebuild("parts", weapon.parts.length - 1);
 }
@@ -471,43 +475,54 @@ function normalizeMap(nextMap) {
   return normalized;
 }
 
-function mapSnapshot() {
-  return JSON.stringify(map);
+function getHistorySnapshot() {
+  return JSON.stringify({
+    map,
+    weaponsData,
+    activeWeaponId,
+    loadedSingleWeapon,
+    selected,
+    editingMode
+  });
 }
 
 function pushUndoSnapshot(snapshot) {
-  if (!snapshot || snapshot === mapSnapshot()) return;
+  if (!snapshot) return;
+  const current = getHistorySnapshot();
+  if (snapshot === current) return;
   history.undo.push(snapshot);
   if (history.undo.length > history.limit) history.undo.shift();
   history.redo.length = 0;
   updateHistoryButtons();
 }
 
-function mutateMap(label, callback) {
-  const before = mapSnapshot();
-  callback();
-  pushUndoSnapshot(before);
-  renderAll();
-}
-
-function undoMapChange() {
+function undoChange() {
   const previous = history.undo.pop();
   if (!previous) return;
-  history.redo.push(mapSnapshot());
-  restoreMapSnapshot(previous);
+  history.redo.push(getHistorySnapshot());
+  restoreHistorySnapshot(previous);
 }
 
-function redoMapChange() {
+function redoChange() {
   const next = history.redo.pop();
   if (!next) return;
-  history.undo.push(mapSnapshot());
-  restoreMapSnapshot(next);
+  history.undo.push(getHistorySnapshot());
+  restoreHistorySnapshot(next);
 }
 
-function restoreMapSnapshot(snapshot) {
-  fpsTest.stop();
-  map = normalizeMap(JSON.parse(snapshot));
-  selected = null;
+function restoreHistorySnapshot(snapshotStr) {
+  if (fpsTest.active) fpsTest.stop();
+  const snapshot = JSON.parse(snapshotStr);
+  map = normalizeMap(snapshot.map);
+  weaponsData = snapshot.weaponsData;
+  activeWeaponId = snapshot.activeWeaponId;
+  loadedSingleWeapon = snapshot.loadedSingleWeapon;
+  selected = snapshot.selected;
+  editingMode = snapshot.editingMode;
+
+  const modeSelect = $("#editor-mode-select");
+  if (modeSelect) modeSelect.value = editingMode;
+
   renderAll();
   updateHistoryButtons();
 }
@@ -902,7 +917,7 @@ function onPointerDown(event) {
 
 function addObject(kind) {
   const center = sceneCenterOnGround();
-  const before = mapSnapshot();
+  const before = getHistorySnapshot();
   if (kind === "box") {
     map.boxes.push({ name: uniqueName("box"), x: center.x, y: 0, z: center.z, sx: 4, sy: 2, sz: 4, rotX: 0, rotY: 0, rotZ: 0, color: colors.box, visible: true });
     selectAfterRebuild("boxes", map.boxes.length - 1);
@@ -938,6 +953,7 @@ function selectAfterRebuild(kind, index) {
 }
 
 function duplicateSelection() {
+  const before = getHistorySnapshot();
   if (editingMode === "weapon") {
     const weapon = getActiveWeapon();
     if (!weapon || !selected || selected.kind !== "parts") return;
@@ -947,36 +963,37 @@ function duplicateSelection() {
     copy.name = uniquePartName(copy.type);
     copy.x += 0.05;
     weapon.parts.push(copy);
+    pushUndoSnapshot(before);
     renderAll();
     selectAfterRebuild("parts", weapon.parts.length - 1);
     return;
   }
   const data = getSelectedData();
   if (!selected || !data) return;
-  const before = mapSnapshot();
   const copy = structuredClone(data);
   if ("name" in copy) copy.name = uniqueName(copy.name || selected.kind);
   nudgeData(copy);
   map[selected.kind].push(copy);
-  selectAfterRebuild(selected.kind, map[selected.kind].length - 1);
   pushUndoSnapshot(before);
+  selectAfterRebuild(selected.kind, map[selected.kind].length - 1);
 }
 
 function deleteSelection() {
+  const before = getHistorySnapshot();
   if (editingMode === "weapon") {
     const weapon = getActiveWeapon();
     if (!weapon || !selected || selected.kind !== "parts") return;
     weapon.parts.splice(selected.index, 1);
     clearSelection();
+    pushUndoSnapshot(before);
     renderAll();
     return;
   }
   if (!selected) return;
-  const before = mapSnapshot();
   map[selected.kind].splice(selected.index, 1);
   clearSelection();
-  renderAll();
   pushUndoSnapshot(before);
+  renderAll();
 }
 
 function nudgeData(data) {
@@ -1356,9 +1373,13 @@ function switchTab(name) {
   document.querySelectorAll(".tab-panel").forEach((panel) => panel.classList.toggle("active", panel.dataset.panel === name));
   
   if (name === "weapon" && editingMode !== "weapon") {
+    const before = getHistorySnapshot();
     setEditorMode("weapon");
+    pushUndoSnapshot(before);
   } else if (name === "map" && editingMode !== "map") {
+    const before = getHistorySnapshot();
     setEditorMode("map");
+    pushUndoSnapshot(before);
   }
 }
 
@@ -1410,13 +1431,63 @@ function setEditorMode(mode) {
   renderAll();
 }
 
-function downloadMap() {
-  updateExport();
-  const blob = new Blob([$("#export-output").value], { type: "application/json" });
+async function exportCurrentFile() {
+  const isWeapon = editingMode === "weapon";
+  if (isWeapon) {
+    updateWeaponOutput();
+  } else {
+    updateExport();
+  }
+  
+  const data = isWeapon ? $("#weapon-output").value : $("#export-output").value;
+  const fileName = isWeapon
+    ? (loadedSingleWeapon ? `${activeWeaponId}.json` : "weapons.json")
+    : `${slug(map.id || map.name || "new-map")}.json`;
+
+  let handle = isWeapon ? weaponFileHandle : mapFileHandle;
+
+  if (window.showSaveFilePicker) {
+    if (!handle) {
+      try {
+        handle = await window.showSaveFilePicker({
+          suggestedName: fileName,
+          types: [{
+            description: 'JSON Files',
+            accept: { 'application/json': ['.json'] }
+          }]
+        });
+        if (isWeapon) {
+          weaponFileHandle = handle;
+        } else {
+          mapFileHandle = handle;
+        }
+      } catch (err) {
+        if (err.name === 'AbortError') return;
+        console.warn("Save file picker failed, falling back to download", err);
+      }
+    }
+
+    if (handle) {
+      try {
+        const writable = await handle.createWritable();
+        await writable.write(data);
+        await writable.close();
+        console.log("Saved successfully via File System Access API");
+        return;
+      } catch (err) {
+        console.warn("Writing to handle failed, falling back to download or trying new picker", err);
+        if (isWeapon) weaponFileHandle = null;
+        else mapFileHandle = null;
+      }
+    }
+  }
+
+  // Fallback to blob download if picker is unsupported or failed
+  const blob = new Blob([data], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = `${slug(map.id || map.name || "new-map")}.json`;
+  anchor.download = fileName;
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
@@ -1426,11 +1497,81 @@ function downloadMap() {
 async function loadMapFile(file) {
   if (!file) return;
   const text = await file.text();
-  const before = mapSnapshot();
+  const before = getHistorySnapshot();
   map = normalizeMap(JSON.parse(text));
   selected = null;
   pushUndoSnapshot(before);
   renderAll();
+}
+
+async function loadMapViaPicker() {
+  if (!window.showOpenFilePicker) return;
+  try {
+    const [handle] = await window.showOpenFilePicker({
+      types: [{
+        description: 'JSON Files',
+        accept: { 'application/json': ['.json'] }
+      }],
+      multiple: false
+    });
+    mapFileHandle = handle;
+    const file = await handle.getFile();
+    await loadMapFile(file);
+  } catch (err) {
+    if (err.name !== 'AbortError') console.error(err);
+  }
+}
+
+async function loadWeaponFile(file) {
+  if (!file) return;
+  const text = await file.text();
+  try {
+    const data = JSON.parse(text);
+    const id = file.name.replace(/\.json$/i, "");
+    const before = getHistorySnapshot();
+    if (data.weapons) {
+      weaponsData = data;
+      activeWeaponId = Object.keys(weaponsData.weapons || {})[0] || "pistol";
+      loadedSingleWeapon = false;
+    } else if (data.parts) {
+      weaponsData = {
+        version: 1,
+        weapons: {
+          [id]: data
+        }
+      };
+      activeWeaponId = id;
+      loadedSingleWeapon = true;
+    } else {
+      throw new Error("Invalid weapons JSON format: must contain 'weapons' or 'parts'");
+    }
+    pushUndoSnapshot(before);
+    renderWeaponList();
+    if (editingMode === "weapon") {
+      clearSelection();
+      rebuildWeaponScene();
+    }
+  } catch (e) {
+    alert("Error parsing weapons JSON: " + e.message);
+  }
+}
+
+async function loadWeaponViaPicker() {
+  if (!window.showOpenFilePicker) return;
+  try {
+    const [handle] = await window.showOpenFilePicker({
+      types: [{
+        description: 'JSON Files',
+        accept: { 'application/json': ['.json'] }
+      }],
+      multiple: false
+    });
+    weaponFileHandle = handle;
+    const file = await handle.getFile();
+    await loadWeaponFile(file);
+  } catch (err) {
+    if (err.name !== 'AbortError') console.error(err);
+  }
 }
 
 function getByPath(object, path) {
@@ -1526,7 +1667,7 @@ transform.addEventListener("dragging-changed", (event) => {
   orbit.enabled = !event.value;
   isTransforming = event.value;
   if (event.value) {
-    transformStartSnapshot = mapSnapshot();
+    transformStartSnapshot = getHistorySnapshot();
   } else {
     pushUndoSnapshot(transformStartSnapshot);
     transformStartSnapshot = null;
@@ -1554,58 +1695,40 @@ document.querySelectorAll("[data-add-part]").forEach((button) => button.addEvent
 document.querySelectorAll("[data-mode]").forEach((button) => button.addEventListener("click", () => setTransformMode(button.dataset.mode)));
 document.querySelectorAll(".tab").forEach((button) => button.addEventListener("click", () => switchTab(button.dataset.tab)));
 
-$("#editor-mode-select")?.addEventListener("change", (e) => setEditorMode(e.target.value));
+$("#editor-mode-select")?.addEventListener("change", (e) => {
+  const before = getHistorySnapshot();
+  setEditorMode(e.target.value);
+  pushUndoSnapshot(before);
+});
 
 $("#active-weapon-select")?.addEventListener("change", (e) => {
+  const before = getHistorySnapshot();
   activeWeaponId = e.target.value;
   clearSelection();
+  pushUndoSnapshot(before);
   renderAll();
 });
 
-$("#weapons-file")?.addEventListener("change", async (event) => {
-  const file = event.target.files[0];
-  if (!file) return;
-  const text = await file.text();
-  try {
-    const data = JSON.parse(text);
-    const id = file.name.replace(/\.json$/i, "");
-    if (data.weapons) {
-      weaponsData = data;
-      activeWeaponId = Object.keys(weaponsData.weapons || {})[0] || "pistol";
-      loadedSingleWeapon = false;
-    } else if (data.parts) {
-      weaponsData = {
-        version: 1,
-        weapons: {
-          [id]: data
-        }
-      };
-      activeWeaponId = id;
-      loadedSingleWeapon = true;
-    } else {
-      throw new Error("Invalid weapons JSON format: must contain 'weapons' or 'parts'");
-    }
-    renderWeaponList();
-    if (editingMode === "weapon") {
-      clearSelection();
-      rebuildWeaponScene();
-    }
-  } catch (e) {
-    alert("Error parsing weapons JSON: " + e.message);
+$("#weapons-file")?.addEventListener("change", (event) => {
+  loadWeaponFile(event.target.files[0]);
+});
+
+$("#map-load-button")?.addEventListener("click", (event) => {
+  if (window.showOpenFilePicker) {
+    event.preventDefault();
+    loadMapViaPicker();
+  }
+});
+
+$("#weapon-load-button")?.addEventListener("click", (event) => {
+  if (window.showOpenFilePicker) {
+    event.preventDefault();
+    loadWeaponViaPicker();
   }
 });
 
 $("#export-weapons")?.addEventListener("click", () => {
-  updateWeaponOutput();
-  const blob = new Blob([$("#weapon-output").value], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = (editingMode === "weapon" && loadedSingleWeapon) ? `${activeWeaponId}.json` : "weapons.json";
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
+  exportCurrentFile();
 });
 
 $("#select-muzzle-tool")?.addEventListener("click", () => {
@@ -1615,10 +1738,10 @@ $("#select-muzzle-tool")?.addEventListener("click", () => {
 
 $("#duplicate-object").addEventListener("click", duplicateSelection);
 $("#delete-object").addEventListener("click", deleteSelection);
-$("#undo-action").addEventListener("click", undoMapChange);
-$("#redo-action").addEventListener("click", redoMapChange);
+$("#undo-action").addEventListener("click", undoChange);
+$("#redo-action").addEventListener("click", redoChange);
 $("#sample-map").addEventListener("click", () => {
-  const before = mapSnapshot();
+  const before = getHistorySnapshot();
   map = createSampleMap();
   selected = null;
   pushUndoSnapshot(before);
@@ -1628,7 +1751,7 @@ $("#validate-map").addEventListener("click", () => {
   renderValidation(validateMap());
   switchTab("map");
 });
-$("#export-map").addEventListener("click", downloadMap);
+$("#export-map").addEventListener("click", exportCurrentFile);
 $("#quick-test").addEventListener("click", startQuickTest);
 $("#exit-test").addEventListener("click", () => fpsTest.stop());
 $("#copy-manifest").addEventListener("click", () => navigator.clipboard.writeText($("#manifest-entry").value));
@@ -1639,17 +1762,16 @@ $("#snap-enabled").addEventListener("change", updateSnapSettings);
 
 document.addEventListener("focusin", (event) => {
   const input = event.target.closest("[data-scope]");
-  if (!input || input.dataset.scope === "weapon") return;
-  pendingInputSnapshot = mapSnapshot();
+  if (!input) return;
+  pendingInputSnapshot = getHistorySnapshot();
 });
 
 document.addEventListener("change", (event) => {
   const input = event.target.closest("[data-scope]");
   if (input) {
-    if (input.dataset.scope !== "weapon") {
-      pushUndoSnapshot(pendingInputSnapshot);
-      pendingInputSnapshot = null;
-    }
+    const snapshot = pendingInputSnapshot || getHistorySnapshot();
+    pushUndoSnapshot(snapshot);
+    pendingInputSnapshot = null;
     setInputValue(input.dataset.scope, input.dataset.path, input.value, input.checked, input.type);
     return;
   }
@@ -1664,13 +1786,30 @@ document.addEventListener("change", (event) => {
 document.addEventListener("keydown", (event) => {
   const isUndo = (event.ctrlKey || event.metaKey) && event.code === "KeyZ";
   const isRedo = (event.ctrlKey || event.metaKey) && (event.code === "KeyY" || (event.shiftKey && event.code === "KeyZ"));
+  const isSave = (event.ctrlKey || event.metaKey) && event.code === "KeyS";
+
+  if (isSave) {
+    event.preventDefault();
+    if (document.activeElement && document.activeElement.blur) {
+      document.activeElement.blur();
+    }
+    exportCurrentFile();
+    return;
+  }
+
   if (!isUndo && !isRedo) return;
+
   const target = event.target;
-  const isTextEdit = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement;
-  if (isTextEdit && target.dataset.scope) return;
+  if (target instanceof HTMLTextAreaElement || (target instanceof HTMLInputElement && target.type === "text")) {
+    return;
+  }
+
   event.preventDefault();
-  if (isRedo) redoMapChange();
-  else undoMapChange();
+  if (document.activeElement && document.activeElement.blur) {
+    document.activeElement.blur();
+  }
+  if (isRedo) redoChange();
+  else undoChange();
 });
 
 window.addEventListener("resize", resize);
