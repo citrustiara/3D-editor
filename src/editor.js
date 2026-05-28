@@ -60,6 +60,7 @@ configureHistoryRestoreHooks({
 });
 
 function onPointerDown(event) {
+  if (event.button !== 0) return;
   if (state.isTransforming || transform.axis) return;
   const rect = renderer.domElement.getBoundingClientRect();
   pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
@@ -79,11 +80,24 @@ function onPointerDown(event) {
   } else {
     selectMesh(target);
   }
+  updateTransformAxisLocks();
 }
 
 function setTransformMode(mode) {
   transform.setMode(mode);
   document.querySelectorAll("[data-mode]").forEach((button) => button.classList.toggle("active", button.dataset.mode === mode));
+  updateTransformAxisLocks();
+}
+
+function updateTransformAxisLocks() {
+  transform.showX = true;
+  transform.showY = true;
+  transform.showZ = true;
+  if (transform.mode !== "rotate") return;
+  const hasRamp = state.selectionSet.some((entry) => entry.kind === "ramps");
+  if (!hasRamp) return;
+  transform.showX = false;
+  transform.showZ = false;
 }
 
 function syncDataFromMesh(mesh, bakeScale = false) {
@@ -383,6 +397,9 @@ transform.addEventListener("dragging-changed", (event) => {
     }
     pushUndoSnapshot(state.transformStartSnapshot);
     state.transformStartSnapshot = null;
+    transform.axis = null;
+    state.isTransforming = false;
+    updateTransformAxisLocks();
   }
 });
 
@@ -408,6 +425,8 @@ transform.addEventListener("objectChange", () => {
 
 transform.addEventListener("mouseUp", () => {
   const object = transform.object;
+  transform.axis = null;
+  state.isTransforming = false;
   if (!object) return;
   if (state.multiGroup && object === state.multiGroup) {
     syncMultiGroupToMeshes(transform.mode === "scale");
@@ -419,9 +438,13 @@ transform.addEventListener("mouseUp", () => {
   } else {
     syncDataFromMesh(object, transform.mode === "scale");
   }
+  updateTransformAxisLocks();
 });
 
-document.querySelectorAll("[data-add]").forEach((button) => button.addEventListener("click", () => addObject(button.dataset.add)));
+document.querySelectorAll("[data-add]").forEach((button) => button.addEventListener("click", () => {
+  addObject(button.dataset.add);
+  updateTransformAxisLocks();
+}));
 document.querySelectorAll("[data-add-part]").forEach((button) => button.addEventListener("click", () => addWeaponPart(button.dataset.addPart)));
 document.querySelectorAll("[data-mode]").forEach((button) => button.addEventListener("click", () => setTransformMode(button.dataset.mode)));
 document.querySelectorAll(".tab").forEach((button) => button.addEventListener("click", () => switchTab(button.dataset.tab)));
@@ -504,33 +527,50 @@ document.addEventListener("change", (event) => {
   }
 });
 
+function commandShortcut(event, keyName, codeName) {
+  return (event.ctrlKey || event.metaKey) &&
+    !event.altKey &&
+    (event.key?.toLowerCase() === keyName || event.code === codeName);
+}
+
+function commitActiveFieldEdit() {
+  const input = document.activeElement?.closest?.("[data-scope]");
+  if (!input) return;
+  const snapshot = state.pendingInputSnapshot || getHistorySnapshot();
+  pushUndoSnapshot(snapshot);
+  state.pendingInputSnapshot = null;
+  setInputValue(input.dataset.scope, input.dataset.path, input.value, input.checked, input.type);
+}
+
+window.addEventListener("keydown", (event) => {
+  const isUndo = commandShortcut(event, "z", "KeyZ") && !event.shiftKey;
+  const isRedo = commandShortcut(event, "y", "KeyY") || (commandShortcut(event, "z", "KeyZ") && event.shiftKey);
+  const isSave = commandShortcut(event, "s", "KeyS");
+
+  if (!isUndo && !isRedo && !isSave) return;
+
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  commitActiveFieldEdit();
+  document.activeElement?.blur?.();
+
+  if (isSave) {
+    exportCurrentFile();
+  } else if (isRedo) {
+    redoChange();
+  } else {
+    undoChange();
+  }
+}, true);
+
 document.addEventListener("keydown", (event) => {
-  const key = event.key.toLowerCase();
   const hasCommandModifier = event.ctrlKey || event.metaKey;
-  const isUndo = hasCommandModifier && key === "z" && !event.shiftKey;
-  const isRedo = hasCommandModifier && (key === "y" || (key === "z" && event.shiftKey));
-  const isSave = hasCommandModifier && key === "s";
   const isSelectAll = (event.ctrlKey || event.metaKey) && event.code === "KeyA";
   const isDuplicate = (event.ctrlKey || event.metaKey) && event.code === "KeyD";
   const isDelete = event.code === "Delete" || event.code === "KeyX";
 
   const target = event.target;
   const isInInput = target instanceof HTMLTextAreaElement || (target instanceof HTMLInputElement && target.type !== "checkbox");
-
-  if (isSave) {
-    event.preventDefault();
-    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
-    exportCurrentFile();
-    return;
-  }
-
-  if (isUndo || isRedo) {
-    event.preventDefault();
-    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
-    if (isRedo) redoChange();
-    else undoChange();
-    return;
-  }
 
   if (isInInput) {
     return;
@@ -546,6 +586,16 @@ document.addEventListener("keydown", (event) => {
     if (state.selectionSet.length > 1) buildMultiGroup();
     else if (state.selectionSet.length === 1) { const m = findMeshByEntry(state.selectionSet[0]); if (m) transform.attach(m); }
     renderInspector();
+    updateTransformAxisLocks();
+    return;
+  }
+
+  if (event.code === "Escape") {
+    event.preventDefault();
+    transform.axis = null;
+    state.isTransforming = false;
+    clearSelection();
+    updateTransformAxisLocks();
     return;
   }
 

@@ -353,6 +353,10 @@ export function clearSelection() {
   clearHighlight();
   clearMultiGroup();
   transform.detach();
+  transform.axis = null;
+  transform.showX = true;
+  transform.showY = true;
+  transform.showZ = true;
   renderInspector();
 }
 
