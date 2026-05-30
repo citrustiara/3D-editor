@@ -1,39 +1,23 @@
 import * as THREE from "https://esm.sh/three@0.165.0";
 
+const UP = new THREE.Vector3(0, 1, 0);
+
 export function normalizeRamp(def = {}) {
   const scale = normalizeScale(def.scale);
-  const width = positiveNumber(def.width ?? def.sx ?? 4, 4) * scale.x;
-  const length = positiveNumber(def.length ?? def.sz ?? 8, 8) * scale.z;
   const position = def.position || {};
   const rotation = def.rotation || {};
+  const width = positiveNumber(def.width ?? def.sx ?? 4, 4) * scale.x;
+  const length = positiveNumber(def.length ?? def.sz ?? 8, 8) * scale.z;
   return {
     ...def,
     x: finiteNumber(def.x ?? position.x, 0),
-    y: finiteNumber(def.y ?? position.y, 1),
+    y: finiteNumber(def.y ?? position.y, 0),
     z: finiteNumber(def.z ?? position.z, 0),
     width,
     length,
     height: positiveNumber(def.height ?? def.sy ?? 2, 2) * scale.y,
     rot: finiteNumber(def.rot ?? def.rotY ?? rotation.y, 0),
   };
-}
-
-function normalizeScale(scale) {
-  if (typeof scale === "number") return { x: Math.abs(scale), y: Math.abs(scale), z: Math.abs(scale) };
-  return {
-    x: positiveNumber(scale?.x, 1),
-    y: positiveNumber(scale?.y, 1),
-    z: positiveNumber(scale?.z, 1),
-  };
-}
-
-function finiteNumber(value, fallback) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : fallback;
-}
-
-function positiveNumber(value, fallback) {
-  return Math.max(0.001, Math.abs(finiteNumber(value, fallback)));
 }
 
 export function makeRampGeometry(def = {}) {
@@ -60,16 +44,61 @@ export function makeRampGeometry(def = {}) {
   return geometry;
 }
 
-export function rampSurfaceY(rampDef, point, margin = 0) {
+export function rampLocalPoint(rampDef, point) {
   const ramp = normalizeRamp(rampDef);
-  const local = new THREE.Vector3(point.x - ramp.x, 0, point.z - ramp.z)
-    .applyAxisAngle(new THREE.Vector3(0, 1, 0), -ramp.rot);
+  return new THREE.Vector3(point.x - ramp.x, 0, point.z - ramp.z).applyAxisAngle(UP, -ramp.rot);
+}
+
+export function rampWorldPoint(rampDef, local) {
+  const ramp = normalizeRamp(rampDef);
+  return new THREE.Vector3(local.x, 0, local.z).applyAxisAngle(UP, ramp.rot).add(new THREE.Vector3(ramp.x, 0, ramp.z));
+}
+
+export function rampSurfaceY(rampDef, point, margin = 0) {
+  const info = rampSurfaceInfo(rampDef, point, margin);
+  return info ? info.y : null;
+}
+
+export function rampSurfaceInfo(rampDef, point, margin = 0) {
+  const ramp = normalizeRamp(rampDef);
+  const local = rampLocalPoint(ramp, point);
   if (Math.abs(local.x) > ramp.width / 2 + margin || Math.abs(local.z) > ramp.length / 2 + margin) return null;
   const t = Math.max(0, Math.min(1, (local.z + ramp.length / 2) / ramp.length));
-  return ramp.y + t * ramp.height;
+  return {
+    local,
+    normal: rampSurfaceNormal(ramp),
+    ramp,
+    t,
+    y: ramp.y + t * ramp.height,
+  };
 }
 
 export function rampUphillDirection(rampDef) {
   const ramp = normalizeRamp(rampDef);
   return new THREE.Vector3(Math.sin(ramp.rot), 0, Math.cos(ramp.rot)).normalize();
+}
+
+export function rampSurfaceNormal(rampDef) {
+  const ramp = normalizeRamp(rampDef);
+  const slope = ramp.height / Math.max(0.001, ramp.length);
+  const uphill = rampUphillDirection(ramp);
+  return new THREE.Vector3(-uphill.x * slope, 1, -uphill.z * slope).normalize();
+}
+
+function normalizeScale(scale) {
+  if (typeof scale === "number") return { x: Math.abs(scale), y: Math.abs(scale), z: Math.abs(scale) };
+  return {
+    x: positiveNumber(scale?.x, 1),
+    y: positiveNumber(scale?.y, 1),
+    z: positiveNumber(scale?.z, 1),
+  };
+}
+
+function finiteNumber(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function positiveNumber(value, fallback) {
+  return Math.max(0.001, Math.abs(finiteNumber(value, fallback)));
 }

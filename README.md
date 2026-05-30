@@ -3,6 +3,8 @@
 A static Three.js editor for the content schema described in
 [`CONTENT_PIPELINE.md`](CONTENT_PIPELINE.md).
 
+![3D editor screenshot](images/Screenshot%202026-05-26%20at%2021-11-28%20Game%20Content%203D%20Editor.png)
+
 ## Run
 
 Serve the folder from a local static server:

@@ -1,5 +1,5 @@
 import * as THREE from "https://esm.sh/three@0.165.0";
-import { makeRampGeometry, normalizeRamp, rampSurfaceY } from "./ramps.js";
+import { makeRampGeometry, normalizeRamp, rampLocalPoint, rampSurfaceInfo, rampSurfaceY, rampWorldPoint } from "./ramps.js";
 
 const PLAYER_RADIUS = 0.42;
 const PLAYER_EYE_HEIGHT = 1.58;
@@ -7,8 +7,11 @@ const PLAYER_HEIGHT = 1.78;
 const GRAVITY = 30;
 const WALK_SPEED = 14.5;
 const JUMP_SPEED = 9.2;
-const LAND_TOLERANCE = 0.2;
-const GROUND_SNAP = 0.28;
+const FPS_RAMP_PROBE_MARGIN = 0.08;
+const FPS_RAMP_LAND_EPSILON = 0.10;
+const FPS_RAMP_STEP_UP = 0.46;
+const FPS_RAMP_STEP_DOWN = 0.72;
+const FPS_RAMP_SOLID_TOP_CLEARANCE = 0.06;
 const DEATH_DROP = 10;
 
 export class FpsTestRuntime {
@@ -113,10 +116,6 @@ export class FpsTestRuntime {
       this.stop();
       return;
     }
-    if (event.code === "Space" && this.player.grounded) {
-      this.player.vel.y = JUMP_SPEED;
-      this.player.grounded = false;
-    }
     this.keys.add(event.code);
     if (["KeyW", "KeyA", "KeyS", "KeyD", "Space", "ShiftLeft", "ShiftRight"].includes(event.code)) {
       event.preventDefault();
@@ -151,182 +150,204 @@ export class FpsTestRuntime {
   }
 
   updateMovement(dt) {
-    const wasGrounded = this.player.grounded;
-    const wasGroundSurface = this.player.groundSurface;
+    const p = this.player;
+    const previousPosition = p.pos.clone();
+    const previousY = previousPosition.y;
 
-    const forward = new THREE.Vector3(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), this.yaw);
-    const right = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), this.yaw);
-    const wish = new THREE.Vector3();
-    if (this.keys.has("KeyW")) wish.add(forward);
-    if (this.keys.has("KeyS")) wish.sub(forward);
-    if (this.keys.has("KeyD")) wish.add(right);
-    if (this.keys.has("KeyA")) wish.sub(right);
-    if (wish.lengthSq() > 0) wish.normalize();
+    const forward = new THREE.Vector3(Math.sin(this.yaw), 0, -Math.cos(this.yaw));
+    const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+    const move = new THREE.Vector3();
+    if (this.keys.has("KeyW")) move.add(forward);
+    if (this.keys.has("KeyS")) move.sub(forward);
+    if (this.keys.has("KeyA")) move.sub(right);
+    if (this.keys.has("KeyD")) move.add(right);
+    if (move.lengthSq() > 0) move.normalize();
 
+    const wasGrounded = p.grounded;
+    const wasGroundSurface = p.groundSurface || null;
     const slideKey = this.keys.has("ShiftLeft") || this.keys.has("ShiftRight") || this.keys.has("ControlLeft");
     const slidePressed = slideKey && !this.slideKeyWasDown;
-    const wantsSlide = slidePressed && this.player.grounded && wish.lengthSq() > 0 && this.slideCooldown <= 0;
+    const wantsSlide = slidePressed && p.grounded && move.lengthSq() > 0 && this.slideCooldown <= 0;
 
     if (wantsSlide) {
       this.slideTimer = 0.58;
       this.slideCooldown = 0.65;
-      this.player.vel.addScaledVector(wish, 7.5);
+      p.vel.addScaledVector(move, 7.5);
     }
-    this.player.sliding = this.slideTimer > 0 && this.player.grounded;
+    p.sliding = this.slideTimer > 0 && p.grounded;
     this.slideKeyWasDown = slideKey;
 
     if (this.slideTimer > 0) this.slideTimer -= dt;
     if (this.slideCooldown > 0) this.slideCooldown -= dt;
 
-    // Snappy movement: accel 220, friction 0.80 when moving, 0.65 when stopping
-    const accel = this.player.sliding ? 32 : (this.player.grounded ? 220 : 25);
-    const maxSpeed = this.player.sliding ? 22 : WALK_SPEED;
-    this.player.vel.addScaledVector(wish, accel * dt);
-    
-    const baseFriction = this.player.sliding ? 0.976 : (this.player.grounded ? (wish.lengthSq() > 0 ? 0.80 : 0.65) : 0.985);
+    // Match GolfShooter's snappy FPS movement constants.
+    const accel = p.sliding ? 32 : (p.grounded ? 220 : 25);
+    const maxSpeed = p.sliding ? 22 : WALK_SPEED;
+    p.vel.addScaledVector(move, accel * dt);
+
+    const baseFriction = p.sliding ? 0.976 : (p.grounded ? (move.lengthSq() > 0 ? 0.80 : 0.65) : 0.985);
     const friction = Math.pow(baseFriction, dt * 60);
-    this.player.vel.x *= friction;
-    this.player.vel.z *= friction;
-    
-    const horiz = Math.hypot(this.player.vel.x, this.player.vel.z);
+    p.vel.x *= friction;
+    p.vel.z *= friction;
+
+    const horiz = Math.hypot(p.vel.x, p.vel.z);
     if (horiz > maxSpeed) {
-      const s = maxSpeed / horiz;
-      this.player.vel.x *= s;
-      this.player.vel.z *= s;
+      const scale = maxSpeed / horiz;
+      p.vel.x *= scale;
+      p.vel.z *= scale;
     }
 
-    if (this.keys.has("Space") && this.player.grounded) {
-      this.player.vel.y = JUMP_SPEED;
-      this.player.grounded = false;
+    if (this.keys.has("Space") && p.grounded) {
+      p.vel.y = JUMP_SPEED;
+      p.grounded = false;
     }
 
-    this.player.vel.y -= GRAVITY * dt;
-
-    const previousY = this.player.pos.y;
-    this.player.pos.addScaledVector(this.player.vel, dt);
+    p.vel.y -= GRAVITY * dt;
+    p.pos.addScaledVector(p.vel, dt);
 
     this.resolveCeilingCollisions(previousY);
-    this.resolveGround(previousY, wasGrounded, wasGroundSurface);
-    this.resolveHorizontalCollisions(previousY);
-    this.clampToArena();
+
+    let onPlat = false;
+    let platSurface = null;
+
+    for (const ramp of this.rampColliders) resolvePlayerVsRampSolid(p, previousPosition, ramp, PLAYER_RADIUS);
+
+    const rampSurface = this.fpsRampSurface(previousPosition, p.vel.y, wasGrounded, wasGroundSurface);
+    if (rampSurface) {
+      p.pos.y = rampSurface.y;
+      p.vel.y = 0;
+      onPlat = true;
+      platSurface = rampSurface.surface;
+    } else {
+      const flatSurface = this.fpsFlatSurfaceY(p.pos, previousY, p.vel.y, wasGrounded, wasGroundSurface);
+      if (flatSurface) {
+        p.pos.y = flatSurface.y;
+        p.vel.y = 0;
+        onPlat = true;
+        platSurface = flatSurface.surface;
+      }
+    }
+    if (onPlat) p.groundSurface = platSurface;
+
+    let onFloor = false;
+    let bestFloorY = -Infinity;
+    for (const floor of this.map?.floors || []) {
+      if (pointInFloor(p.pos.x, p.pos.z, floor, PLAYER_RADIUS)) {
+        const y = Number(floor.y || 0);
+        if (y > bestFloorY) {
+          bestFloorY = y;
+          onFloor = true;
+        }
+      }
+    }
+
+    if (!onPlat && onFloor && p.pos.y <= bestFloorY) {
+      p.pos.y = bestFloorY;
+      p.vel.y = 0;
+      p.grounded = true;
+      p.groundSurface = "floor";
+    } else {
+      p.grounded = onPlat;
+      if (!p.grounded) p.groundSurface = null;
+    }
+
     this.killIfFallen();
-    this.body.position.copy(this.player.pos);
-    
-    // Smooth camera height transitions
+    this.clampToArena();
+    for (const collider of uniqueColliders([...this.solidColliders, ...this.platformColliders])) {
+      if (shouldSkipCompositeSurfaceCollision(p, collider)) continue;
+      resolvePlayerVsColliderObb(p.pos, collider, PLAYER_RADIUS);
+    }
+    this.clampToArena();
+    this.body.position.copy(p.pos);
+
     this.currentCamHeight = THREE.MathUtils.lerp(
       this.currentCamHeight || PLAYER_EYE_HEIGHT,
-      this.player.sliding ? 0.8 : PLAYER_EYE_HEIGHT,
+      p.sliding ? 0.8 : PLAYER_EYE_HEIGHT,
       dt * 10
     );
   }
 
   resolveCeilingCollisions(previousY) {
-    if (this.player.vel.y <= 0) return;
+    const p = this.player;
+    if (p.vel.y <= 0) return;
     const previousHead = previousY + PLAYER_HEIGHT;
-    const currentHead = this.player.pos.y + PLAYER_HEIGHT;
-    const blockers = [...this.solidColliders, ...this.platformColliders];
-    for (const collider of blockers) {
-      if (!pointInObbTop(this.player.pos.x, this.player.pos.z, collider, PLAYER_RADIUS)) continue;
-      if (previousHead <= collider.bottom + LAND_TOLERANCE && currentHead >= collider.bottom) {
-        this.player.pos.y = collider.bottom - PLAYER_HEIGHT - 0.01;
-        this.player.vel.y = 0;
-        this.player.grounded = false;
-        this.player.groundSurface = null;
-        return;
+    const currentHead = p.pos.y + PLAYER_HEIGHT;
+    const CEILING_TOLERANCE = 0.20;
+    for (const collider of uniqueColliders([...this.platformColliders, ...this.solidColliders])) {
+      if (!pointInObbTop(p.pos.x, p.pos.z, collider, PLAYER_RADIUS)) continue;
+      if (previousHead <= collider.bottom + CEILING_TOLERANCE && currentHead >= collider.bottom) {
+        p.pos.y = collider.bottom - PLAYER_HEIGHT - 0.01;
+        p.vel.y = 0;
+        break;
       }
     }
   }
 
-  resolveGround(previousY, wasGrounded, wasGroundSurface) {
-    const surfaceY = this.surfaceYAt(this.player.pos.x, this.player.pos.z, previousY, this.player.pos.y, wasGrounded, wasGroundSurface);
-    if (surfaceY === null) {
-      this.player.grounded = false;
-      this.player.groundSurface = null;
-      return;
-    }
-
-    let keepGrounded = false;
-    if (wasGrounded) {
-      if (this.player.groundSurface === wasGroundSurface) {
-        keepGrounded = true;
-      } else {
-        const heightDiff = Math.abs(surfaceY - previousY);
-        if (heightDiff <= GROUND_SNAP) {
-          keepGrounded = true;
-        }
-      }
-    } else {
-      const crossed = previousY >= surfaceY - LAND_TOLERANCE && this.player.pos.y <= surfaceY + GROUND_SNAP;
-      if (crossed) {
-        keepGrounded = true;
+  fpsFlatSurfaceY(position, previousY, velocityY, wasGrounded, wasGroundSurface) {
+    if (velocityY > 0) return null;
+    let best = null;
+    for (const surface of uniqueColliders([...this.platformColliders, ...this.solidColliders])) {
+      const inside = pointInObbTop(position.x, position.z, surface, PLAYER_RADIUS);
+      const canSnap = (wasGrounded && wasGroundSurface === surface) ||
+        (previousY >= surface.top - 0.05 && position.y <= surface.top);
+      if (inside && canSnap && (!best || surface.top > best.y)) {
+        best = { y: surface.top, surface };
       }
     }
-
-    if (this.player.vel.y <= 0 && keepGrounded) {
-      this.player.pos.y = surfaceY;
-      this.player.vel.y = 0;
-      this.player.grounded = true;
-    } else {
-      this.player.grounded = false;
-      this.player.groundSurface = null;
-    }
+    return best;
   }
 
-  resolveHorizontalCollisions(previousY) {
-    for (const collider of [...this.solidColliders, ...this.platformColliders]) {
-      if (
-        this.player.grounded &&
-        (this.player.groundSurface === collider ||
-          (Math.abs(this.player.pos.y - collider.top) <= GROUND_SNAP && pointInObbTop(this.player.pos.x, this.player.pos.z, collider, PLAYER_RADIUS)))
-      ) {
-        continue;
-      }
-      const canStepOn = previousY >= collider.top - LAND_TOLERANCE &&
-        this.player.vel.y <= 0 &&
-        pointInObbTop(this.player.pos.x, this.player.pos.z, collider, PLAYER_RADIUS);
-      if (canStepOn) continue;
-      if (this.player.pos.y + PLAYER_HEIGHT < collider.bottom || this.player.pos.y > collider.top) continue;
-      resolveCircleVsObb(this.player.pos, collider, PLAYER_RADIUS);
-    }
+  fpsRampSurface(previousPosition, velocityY, wasGrounded, wasGroundSurface) {
+    let best = null;
+    const p = this.player;
     for (const ramp of this.rampColliders) {
-      resolveCircleVsRamp(this.player.pos, ramp, PLAYER_RADIUS);
+      const info = rampSurfaceInfo(ramp, p.pos, FPS_RAMP_PROBE_MARGIN);
+      if (!info) continue;
+
+      const alreadyOnRamp = wasGrounded && wasGroundSurface === ramp;
+      if (velocityY > 0) continue;
+
+      const previousInfo = rampSurfaceInfo(ramp, previousPosition, FPS_RAMP_PROBE_MARGIN);
+      const previousSurfaceY = previousInfo?.y ?? info.y;
+      const maxStepUp = alreadyOnRamp ? FPS_RAMP_STEP_UP : Math.min(FPS_RAMP_STEP_UP, Math.max(0.18, Math.abs(velocityY) * 0.04 + 0.18));
+      const nearSurfaceNow = p.pos.y >= info.y - FPS_RAMP_STEP_DOWN && p.pos.y <= info.y + FPS_RAMP_LAND_EPSILON;
+      const crossedSurface = previousPosition.y >= previousSurfaceY - 0.05 && nearSurfaceNow;
+      const canStepUp = wasGrounded && previousPosition.y >= info.y - maxStepUp && nearSurfaceNow;
+      const canContinueOnRamp = alreadyOnRamp && p.pos.y <= info.y + FPS_RAMP_STEP_DOWN;
+      const canLandOrStepOn = velocityY <= 0 && (crossedSurface || canStepUp);
+
+      if ((canContinueOnRamp || canLandOrStepOn) && (!best || info.y > best.y)) {
+        best = { y: info.y, surface: ramp, normal: info.normal };
+      }
     }
+    return best;
   }
 
   surfaceYAt(x, z, previousY = Infinity, currentY = previousY, wasGrounded = false, wasGroundSurface = null) {
     let best = null;
     this.player.groundSurface = null;
     for (const floor of this.map?.floors || []) {
-      if (pointInRect(x, z, floor, PLAYER_RADIUS)) {
+      if (pointInFloor(x, z, floor, PLAYER_RADIUS)) {
         const y = Number(floor.y || 0);
         if (best === null || y > best) {
           best = y;
-          this.player.groundSurface = null;
+          this.player.groundSurface = "floor";
         }
       }
     }
-    for (const platform of this.platformColliders) {
-      const canSnap = (wasGrounded && wasGroundSurface === platform) ? true : canSnapToSurface(platform.top, previousY, currentY);
+    for (const platform of uniqueColliders([...this.platformColliders, ...this.solidColliders])) {
+      const canSnap = (wasGrounded && wasGroundSurface === platform) || canSnapToSurface(platform.top, previousY, currentY);
       if (canSnap && pointInObbTop(x, z, platform, PLAYER_RADIUS) && (best === null || platform.top > best)) {
         best = platform.top;
         this.player.groundSurface = platform;
       }
     }
-    for (const collider of this.solidColliders) {
-      const canSnap = (wasGrounded && wasGroundSurface === collider) ? true : canSnapToSurface(collider.top, previousY, currentY);
-      if (canSnap && pointInObbTop(x, z, collider, PLAYER_RADIUS) && (best === null || collider.top > best)) {
-        best = collider.top;
-        this.player.groundSurface = collider;
-      }
-    }
     for (const ramp of this.rampColliders) {
       const y = rampSurfaceY(ramp, { x, z }, PLAYER_RADIUS);
-      if (y !== null) {
-        const canSnap = (wasGrounded && wasGroundSurface === ramp) ? true : canSnapToRampSurface(y, previousY, currentY);
-        if (canSnap && (best === null || y > best)) {
-          best = y;
-          this.player.groundSurface = ramp;
-        }
+      const canSnap = (wasGrounded && wasGroundSurface === ramp) || canSnapToRampSurface(y, previousY, currentY);
+      if (y !== null && canSnap && (best === null || y > best)) {
+        best = y;
+        this.player.groundSurface = ramp;
       }
     }
     return best;
@@ -334,10 +355,11 @@ export class FpsTestRuntime {
 
   resetPlayerToSpawn() {
     const spawn = this.map?.spawnPoints?.[this.spawnIndex] || this.map?.spawnPoints?.[0] || { x: 0, z: 0 };
-    const surfaceY = this.surfaceYAt(spawn.x, spawn.z, Infinity, Infinity) ?? 0;
-    this.player.pos.set(Number(spawn.x || 0), surfaceY + 0.02, Number(spawn.z || 0));
+    const surfaceY = this.surfaceYAt(Number(spawn.x || 0), Number(spawn.z || 0), Infinity, Infinity) ?? 0;
+    this.player.pos.set(Number(spawn.x || 0), surfaceY, Number(spawn.z || 0));
     this.player.vel.set(0, 0, 0);
     this.player.grounded = true;
+    if (!this.player.groundSurface) this.player.groundSurface = "floor";
     this.body.position.copy(this.player.pos);
   }
 
@@ -352,30 +374,44 @@ export class FpsTestRuntime {
   lowestArenaY() {
     let lowest = (this.map?.floors && this.map.floors.length > 0) ? Infinity : -60;
     for (const floor of this.map?.floors || []) lowest = Math.min(lowest, Number(floor.y || 0));
-    for (const ramp of this.map?.ramps || []) lowest = Math.min(lowest, Number(ramp.y ?? 1));
+    for (const ramp of this.map?.ramps || []) lowest = Math.min(lowest, Number(ramp.y ?? 0));
     if (lowest === Infinity) lowest = 0;
     return lowest;
   }
 
   clampToArena() {
-    if (this.player.grounded && this.player.groundSurface) return;
-    if (pointInsideAnyFloor(this.player.pos.x, this.player.pos.z, this.map?.floors || [], PLAYER_RADIUS)) return;
-    let nearest = null;
-    let nearestDistance = Infinity;
-    for (const floor of this.map?.floors || []) {
-      const halfX = Number(floor.sx || 1) / 2 - PLAYER_RADIUS;
-      const halfZ = Number(floor.sz || 1) / 2 - PLAYER_RADIUS;
-      const x = clamp(this.player.pos.x, Number(floor.x || 0) - halfX, Number(floor.x || 0) + halfX);
-      const z = clamp(this.player.pos.z, Number(floor.z || 0) - halfZ, Number(floor.z || 0) + halfZ);
-      const distance = (x - this.player.pos.x) ** 2 + (z - this.player.pos.z) ** 2;
-      if (distance < nearestDistance) {
-        nearestDistance = distance;
-        nearest = { x, z };
+    if (this.player.grounded && this.player.groundSurface && this.player.groundSurface !== "floor") return;
+    const floors = this.map?.floors || [];
+    if (isPointInsideArena(this.player.pos, floors, PLAYER_RADIUS)) return;
+    let best = null;
+    let bestDist = Infinity;
+    for (const floor of floors) {
+      let candidate;
+      if (floor.type === "circle") {
+        const dx = this.player.pos.x - Number(floor.x || 0);
+        const dz = this.player.pos.z - Number(floor.z || 0);
+        const len = Math.max(0.0001, Math.hypot(dx, dz));
+        const r = Math.max(0, Number(floor.r || 1) - PLAYER_RADIUS);
+        candidate = { x: Number(floor.x || 0) + (dx / len) * r, z: Number(floor.z || 0) + (dz / len) * r };
+      } else {
+        const x = Number(floor.x || 0);
+        const z = Number(floor.z || 0);
+        const halfX = Number(floor.sx || 1) / 2;
+        const halfZ = Number(floor.sz || 1) / 2;
+        candidate = {
+          x: clamp(this.player.pos.x, x - halfX + PLAYER_RADIUS, x + halfX - PLAYER_RADIUS),
+          z: clamp(this.player.pos.z, z - halfZ + PLAYER_RADIUS, z + halfZ - PLAYER_RADIUS),
+        };
+      }
+      const dist = Math.hypot(candidate.x - this.player.pos.x, candidate.z - this.player.pos.z);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = candidate;
       }
     }
-    if (nearest) {
-      this.player.pos.x = nearest.x;
-      this.player.pos.z = nearest.z;
+    if (best) {
+      this.player.pos.x = best.x;
+      this.player.pos.z = best.z;
     }
   }
 
@@ -463,7 +499,9 @@ export class FpsTestRuntime {
     this.rampColliders = (this.map?.ramps || []).map(createRampCollider);
     const material = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false });
     for (const floor of this.map?.floors || []) {
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(Number(floor.sx || 1), 0.12, Number(floor.sz || 1)), material);
+      const mesh = floor.type === "circle"
+        ? new THREE.Mesh(new THREE.CylinderGeometry(Number(floor.r || 1), Number(floor.r || 1), 0.12, 48), material)
+        : new THREE.Mesh(new THREE.BoxGeometry(Number(floor.sx || 1), 0.12, Number(floor.sz || 1)), material);
       mesh.position.set(Number(floor.x || 0), Number(floor.y || 0) - 0.06, Number(floor.z || 0));
       this.colliderGroup.add(mesh);
     }
@@ -512,24 +550,37 @@ function getSolidBoxes(map) {
   ];
 }
 
-function pointInRect(x, z, rect, margin = 0) {
-  const halfX = Number(rect.sx || 1) / 2 + margin;
-  const halfZ = Number(rect.sz || 1) / 2 + margin;
-  return Math.abs(x - Number(rect.x || 0)) <= halfX && Math.abs(z - Number(rect.z || 0)) <= halfZ;
+function pointInFloor(x, z, floor, margin = 0) {
+  if (floor.type === "circle") {
+    return Math.hypot(x - Number(floor.x || 0), z - Number(floor.z || 0)) <= Number(floor.r || 1) + margin;
+  }
+  const halfX = Number(floor.sx || 1) / 2 + margin;
+  const halfZ = Number(floor.sz || 1) / 2 + margin;
+  return Math.abs(x - Number(floor.x || 0)) <= halfX && Math.abs(z - Number(floor.z || 0)) <= halfZ;
 }
 
-function pointInsideAnyFloor(x, z, floors, margin = 0) {
-  return floors.some((floor) => pointInRect(x, z, floor, -margin));
+function isPointInsideArena(point, floors, margin = 0) {
+  if (!floors || floors.length === 0) return true;
+  return floors.some((floor) => {
+    if (floor.type === "circle") {
+      return Math.hypot(point.x - Number(floor.x || 0), point.z - Number(floor.z || 0)) <= Number(floor.r || 1) - margin;
+    }
+    return point.x >= Number(floor.x || 0) - Number(floor.sx || 1) / 2 + margin &&
+      point.x <= Number(floor.x || 0) + Number(floor.sx || 1) / 2 - margin &&
+      point.z >= Number(floor.z || 0) - Number(floor.sz || 1) / 2 + margin &&
+      point.z <= Number(floor.z || 0) + Number(floor.sz || 1) / 2 - margin;
+  });
 }
 
 function canSnapToSurface(surfaceY, previousY, currentY) {
   if (previousY === Infinity) return true;
-  return previousY >= surfaceY - LAND_TOLERANCE && currentY <= surfaceY + GROUND_SNAP;
+  return previousY >= surfaceY - 0.05 && currentY <= surfaceY;
 }
 
 function canSnapToRampSurface(surfaceY, previousY, currentY) {
+  if (surfaceY === null) return false;
   if (previousY === Infinity) return true;
-  return previousY >= surfaceY - GROUND_SNAP && currentY <= surfaceY + GROUND_SNAP;
+  return previousY >= surfaceY - FPS_RAMP_STEP_DOWN && currentY <= surfaceY + FPS_RAMP_LAND_EPSILON;
 }
 
 function createRampCollider(rampDef) {
@@ -623,8 +674,22 @@ function pointInObbTop(x, z, collider, margin = 0) {
   return Math.abs(local.x) <= collider.halfSize.x + margin && Math.abs(local.z) <= collider.halfSize.z + margin;
 }
 
-function resolveCircleVsRamp(position, ramp, radius) {
-  const local = rotatePoint(position.x - ramp.x, position.z - ramp.z, ramp.rot);
+function shouldSkipCompositeSurfaceCollision(player, obstacle) {
+  const support = player.groundSurface;
+  if (!player.grounded || !support || support === "floor" || support === obstacle) return false;
+  if (!support.center) return false;
+  const standingOnSupport = Math.abs(player.pos.y - support.top) <= 0.12;
+  const obstacleCrossesFeet = obstacle.bottom <= player.pos.y + 0.08 && obstacle.top > player.pos.y + 0.08;
+  const overlapsX = support.center.x - support.halfSize.x < obstacle.center.x + obstacle.halfSize.x - 0.02 &&
+    support.center.x + support.halfSize.x > obstacle.center.x - obstacle.halfSize.x + 0.02;
+  const overlapsZ = support.center.z - support.halfSize.z < obstacle.center.z + obstacle.halfSize.z - 0.02 &&
+    support.center.z + support.halfSize.z > obstacle.center.z - obstacle.halfSize.z + 0.02;
+  return standingOnSupport && obstacleCrossesFeet && overlapsX && overlapsZ;
+}
+
+function resolvePlayerVsRampSolid(player, previousPosition, ramp, radius) {
+  const position = player.pos;
+  const local = rampLocalPoint(ramp, position);
   const halfWidth = ramp.width / 2;
   const halfLength = ramp.length / 2;
   if (
@@ -632,40 +697,86 @@ function resolveCircleVsRamp(position, ramp, radius) {
     local.x > halfWidth + radius ||
     local.z < -halfLength - radius ||
     local.z > halfLength + radius
-  ) {
+  ) return;
+
+  const clampedX = clamp(local.x, -halfWidth, halfWidth);
+  const clampedZ = clamp(local.z, -halfLength, halfLength);
+  const surfaceT = (clampedZ + halfLength) / ramp.length;
+  const solidTopY = ramp.y + surfaceT * ramp.height;
+  const topInfo = rampSurfaceInfo(ramp, position, FPS_RAMP_PROBE_MARGIN);
+  const previousTopInfo = rampSurfaceInfo(ramp, previousPosition, FPS_RAMP_PROBE_MARGIN);
+  const wasOnRampTop = previousTopInfo &&
+    previousPosition.y >= previousTopInfo.y - 0.08 &&
+    previousPosition.y <= previousTopInfo.y + FPS_RAMP_LAND_EPSILON;
+  if (wasOnRampTop && topInfo && player.vel.y > 0) {
+    position.y = Math.max(position.y, topInfo.y + 0.04);
     return;
   }
 
-  const clampedZ = clamp(local.z, -halfLength, halfLength);
-  const t = (clampedZ + halfLength) / ramp.length;
-  const surfaceY = ramp.y + t * ramp.height;
-  if (position.y + PLAYER_HEIGHT < ramp.y || position.y >= surfaceY - GROUND_SNAP) return;
-  if (local.z < -halfLength && position.y >= ramp.y - LAND_TOLERANCE) return;
+  const canUseTopSurface = topInfo &&
+    player.vel.y <= 0 &&
+    previousPosition.y >= topInfo.y - FPS_RAMP_STEP_UP &&
+    position.y >= topInfo.y - FPS_RAMP_STEP_DOWN &&
+    position.y <= topInfo.y + FPS_RAMP_LAND_EPSILON;
+  if (canUseTopSurface) return;
 
-  const candidates = [
-    { distance: local.x + halfWidth + radius, x: -halfWidth - radius, z: local.z },
-    { distance: halfWidth + radius - local.x, x: halfWidth + radius, z: local.z },
-    { distance: halfLength + radius - local.z, x: local.x, z: halfLength + radius },
-  ];
+  if (position.y >= solidTopY - FPS_RAMP_SOLID_TOP_CLEARANCE) return;
+  if (position.y + PLAYER_HEIGHT <= ramp.y + 0.05) return;
 
-  if (position.y < ramp.y - LAND_TOLERANCE) {
-    candidates.push({ distance: local.z + halfLength + radius, x: local.x, z: -halfLength - radius });
+  const fromLowEnd = local.z < -halfLength && previousPosition.y >= ramp.y - FPS_RAMP_SOLID_TOP_CLEARANCE;
+  if (fromLowEnd) return;
+
+  let targetLocal = null;
+  let normalLocal = null;
+  const dx = local.x - clampedX;
+  const dz = local.z - clampedZ;
+  const distSq = dx * dx + dz * dz;
+
+  if (distSq > 0.0001) {
+    if (distSq >= radius * radius) return;
+    const dist = Math.sqrt(distSq);
+    const push = radius - dist;
+    targetLocal = { x: local.x + (dx / dist) * push, z: local.z + (dz / dist) * push };
+    normalLocal = new THREE.Vector3(dx / dist, 0, dz / dist);
+  } else {
+    const previousLocal = rampLocalPoint(ramp, previousPosition);
+    if (previousLocal.x < -halfWidth) {
+      targetLocal = { x: -halfWidth - radius, z: local.z };
+      normalLocal = new THREE.Vector3(-1, 0, 0);
+    } else if (previousLocal.x > halfWidth) {
+      targetLocal = { x: halfWidth + radius, z: local.z };
+      normalLocal = new THREE.Vector3(1, 0, 0);
+    } else if (previousLocal.z > halfLength) {
+      targetLocal = { x: local.x, z: halfLength + radius };
+      normalLocal = new THREE.Vector3(0, 0, 1);
+    } else if (previousLocal.z < -halfLength && previousPosition.y < ramp.y - FPS_RAMP_SOLID_TOP_CLEARANCE) {
+      targetLocal = { x: local.x, z: -halfLength - radius };
+      normalLocal = new THREE.Vector3(0, 0, -1);
+    } else {
+      return;
+    }
   }
 
-  const pushTarget = candidates
-    .filter((candidate) => candidate.distance >= 0)
-    .sort((a, b) => a.distance - b.distance)[0];
-  if (!pushTarget) return;
+  const worldPoint = rampWorldPoint(ramp, targetLocal);
+  position.x = worldPoint.x;
+  position.z = worldPoint.z;
 
-  const world = rotatePoint(pushTarget.x, pushTarget.z, -ramp.rot);
-  position.x = ramp.x + world.x;
-  position.z = ramp.z + world.z;
+  const normalWorld = normalLocal.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), ramp.rot).normalize();
+  const inwardVelocity = player.vel.dot(normalWorld);
+  if (inwardVelocity < 0) player.vel.addScaledVector(normalWorld, -inwardVelocity);
 }
 
-function resolveCircleVsObb(position, collider, radius) {
-  const local = new THREE.Vector3(position.x, clamp(position.y, collider.bottom, collider.top), position.z)
+function resolvePlayerVsColliderObb(position, collider, radius) {
+  const MICRO_STEP_HEIGHT = 0.36;
+  const TOP_CLEARANCE = 0.08;
+  const bottom = collider.bottom;
+  const top = collider.top;
+  if (position.y >= top - TOP_CLEARANCE || position.y + PLAYER_HEIGHT < bottom) return;
+
+  const local = new THREE.Vector3(position.x, Math.max(bottom, Math.min(top, position.y)), position.z)
     .sub(collider.center)
     .applyQuaternion(collider.inverseQuaternion);
+
   const localYAxis = new THREE.Vector3(0, 1, 0).applyQuaternion(collider.quaternion);
   const sinPhi = Math.sqrt(Math.max(0, 1 - localYAxis.y * localYAxis.y));
   const maxProj = PLAYER_HEIGHT * Math.abs(localYAxis.y) + radius * sinPhi;
@@ -676,8 +787,14 @@ function resolveCircleVsObb(position, collider, radius) {
   let dx = local.x - closestX;
   let dz = local.z - closestZ;
   const distSq = dx * dx + dz * dz;
-
   if (distSq >= radius * radius) return;
+
+  const stepHeight = top - position.y;
+  if (stepHeight > TOP_CLEARANCE && stepHeight <= MICRO_STEP_HEIGHT) {
+    position.y = top;
+    return;
+  }
+
   if (distSq < 0.0001) {
     const pushX = collider.halfSize.x - Math.abs(local.x);
     const pushZ = collider.halfSize.z - Math.abs(local.z);
@@ -697,16 +814,13 @@ function resolveCircleVsObb(position, collider, radius) {
     local.z += (dz / dist) * push;
   }
 
-  const world = local.applyQuaternion(collider.quaternion).add(collider.center);
-  const push = new THREE.Vector3(world.x - position.x, 0, world.z - position.z);
-  position.x += push.x;
-  position.z += push.z;
+  const worldPos = local.applyQuaternion(collider.quaternion).add(collider.center);
+  position.x = worldPos.x;
+  position.z = worldPos.z;
 }
 
-function rotatePoint(x, z, angle) {
-  const c = Math.cos(angle);
-  const s = Math.sin(angle);
-  return { x: x * c - z * s, z: x * s + z * c };
+function uniqueColliders(colliders) {
+  return [...new Set(colliders)];
 }
 
 function clamp(value, min, max) {
